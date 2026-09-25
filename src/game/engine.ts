@@ -96,6 +96,33 @@ export class GameEngine {
   public touchDashRequested: boolean = false;
   public touchUltimateRequested: boolean = false;
 
+  // Multiplayer State
+  public isMultiplayer: boolean = false;
+  public localRole: 'PLAYER_1' | 'PLAYER_2' = 'PLAYER_1';
+  public localPlayerName: string = 'VEX';
+  public remotePlayerName: string = 'NOVA';
+  public multiplayerRoomCode: string = '';
+  private netSyncTimer: number = 0;
+  private netSeq: number = 0;
+  private remoteTarget: {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    angle: number;
+    walkCycle: number;
+    isDashing: boolean;
+  } | null = null;
+  private pendingPowerUpCollects = new Set<string>();
+
+  // Multiplayer Event Callbacks
+  public onSendPlayerState?: (state: any) => void;
+  public onSendPlayerAttack?: (attack: any) => void;
+  public onSendPlayerDash?: (dx: number, dy: number) => void;
+  public onSendPlayerUltimate?: (x: number, y: number) => void;
+  public onSendDamage?: (targetRole: 'PLAYER_1' | 'PLAYER_2', damage: number, isCritical: boolean, source: string, newHp: number) => void;
+  public onSendCollectPowerUp?: (powerUpId: string, role: 'PLAYER_1' | 'PLAYER_2') => void;
+
   // Callback to inform React UI of state changes
   public onStateChange?: (state: GameState) => void;
 
@@ -172,6 +199,7 @@ export class GameEngine {
   }
 
   public startMatch(mode: GameMode, diff: DifficultyLevel = 'NORMAL', level: number = 1) {
+    this.isMultiplayer = false;
     this.gameMode = mode;
     this.difficulty = diff;
     this.currentLevel = level;
@@ -223,6 +251,259 @@ export class GameEngine {
 
     this.setupArenaHazards();
     this.startCountdown();
+  }
+
+  public startMultiplayerMatch(
+    role: 'PLAYER_1' | 'PLAYER_2',
+    localName: string,
+    remoteName: string,
+    roomCode: string
+  ) {
+    this.isMultiplayer = true;
+    this.localRole = role;
+    this.localPlayerName = localName;
+    this.remotePlayerName = remoteName;
+    this.multiplayerRoomCode = roomCode;
+    this.gameMode = 'QUICK_DUEL';
+    this.difficulty = 'NORMAL';
+    this.currentLevel = 1;
+    this.currentRound = 1;
+    this.vexRoundsWon = 0;
+    this.novaRoundsWon = 0;
+    this.pendingPowerUpCollects.clear();
+    this.remoteTarget = null;
+
+    this.nova.isBoss = false;
+    this.nova.bossTier = undefined;
+    this.vex.name = role === 'PLAYER_1' ? localName : remoteName;
+    this.nova.name = role === 'PLAYER_2' ? localName : remoteName;
+
+    this.vex.lives = 2;
+    this.nova.lives = 2;
+    this.resetRoundEntities();
+
+    this.matchStats = {
+      damageDealt: 0,
+      damageReceived: 0,
+      powerUpsCollected: 0,
+      durationSeconds: 0,
+      perfectRounds: 0,
+      roundWins: 0,
+      roundLosses: 0,
+    };
+
+    this.setupArenaHazards();
+    this.startCountdown();
+  }
+
+  public applyRemotePlayerState(role: 'PLAYER_1' | 'PLAYER_2', state: any) {
+    if (!this.isMultiplayer) return;
+    const remoteRole = this.localRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
+    if (role !== remoteRole) return;
+
+    this.remoteTarget = {
+      x: state.x,
+      y: state.y,
+      vx: state.vx,
+      vy: state.vy,
+      angle: state.angle,
+      walkCycle: state.walkCycle,
+      isDashing: state.isDashing,
+    };
+  }
+
+  public applyRemoteAttack(attack: any) {
+    if (!this.isMultiplayer) return;
+    const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
+    remoteMech.isAttacking = true;
+    remoteMech.attackTimer = ATTACK_DURATION;
+    remoteMech.attackCooldown = ATTACK_COOLDOWN;
+    remoteMech.hasPowerAttack = Boolean(attack.hasPowerAttack);
+    soundManager.playAttack(remoteMech.hasPowerAttack);
+  }
+
+  public applyRemoteDash(role: 'PLAYER_1' | 'PLAYER_2', dx: number, dy: number) {
+    if (!this.isMultiplayer) return;
+    const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
+    remoteMech.isDashing = true;
+    remoteMech.dashTimer = DASH_DURATION;
+    remoteMech.dashCooldown = DASH_COOLDOWN;
+    remoteMech.invulnerableTimer = DASH_INVULNERABLE_TIME;
+    remoteMech.dashDirX = dx || Math.cos(remoteMech.angle);
+    remoteMech.dashDirY = dy || Math.sin(remoteMech.angle);
+
+    soundManager.playDash();
+    this.triggerScreenShake(3);
+
+    const color = remoteMech.id === 'VEX' ? '#38bdf8' : '#ef4444';
+    for (let i = 0; i < 10; i++) {
+      this.particles.push({
+        x: remoteMech.x - remoteMech.dashDirX * 16,
+        y: remoteMech.y - remoteMech.dashDirY * 16,
+        vx: -remoteMech.dashDirX * 120 + (Math.random() - 0.5) * 80,
+        vy: -remoteMech.dashDirY * 120 + (Math.random() - 0.5) * 80,
+        color,
+        size: 3 + Math.random() * 3,
+        alpha: 1,
+        decay: 3.5,
+        type: 'TRAIL',
+      });
+    }
+  }
+
+  public applyRemoteUltimate(_role: 'PLAYER_1' | 'PLAYER_2', x: number, y: number) {
+    if (!this.isMultiplayer) return;
+    const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
+    remoteMech.ultimateCooldown = remoteMech.maxUltimateCooldown;
+    soundManager.playAttack(true);
+    this.triggerScreenShake(7);
+
+    const color = remoteMech.id === 'VEX' ? '#38bdf8' : '#f43f5e';
+    for (let i = 0; i < 28; i++) {
+      const angle = (Math.PI * 2 * i) / 28;
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * 190,
+        vy: Math.sin(angle) * 190,
+        color,
+        size: 4 + Math.random() * 3,
+        alpha: 1,
+        decay: 2.2,
+        type: 'SHOCKWAVE',
+      });
+    }
+
+    this.addFloatingText('ENERGY BURST!', x, y - 32, color, 1.3);
+  }
+
+  public applyRemoteDamage(
+    targetRole: 'PLAYER_1' | 'PLAYER_2',
+    damage: number,
+    isCritical: boolean,
+    _source: string,
+    newHp: number
+  ) {
+    const targetMech = targetRole === 'PLAYER_1' ? this.vex : this.nova;
+    targetMech.hp = Math.max(0, newHp);
+
+    if (targetRole === this.localRole) {
+      this.matchStats.damageReceived += damage;
+    } else {
+      this.matchStats.damageDealt += damage;
+    }
+
+    const intDmg = Math.round(damage);
+    const color = targetMech.id === 'VEX' ? '#ef4444' : isCritical ? '#f59e0b' : '#38bdf8';
+    this.addFloatingText(
+      `-${intDmg}${isCritical ? ' CRIT!' : ''}`,
+      targetMech.x,
+      targetMech.y - 25,
+      color,
+      isCritical ? 1.4 : 1.0
+    );
+
+    targetMech.hitStunTimer = HIT_STUN_DURATION;
+    targetMech.invulnerableTimer = INVULNERABLE_AFTER_HIT;
+    soundManager.playHit(isCritical);
+    this.triggerScreenShake(isCritical ? 8 : 4);
+
+    // Hit sparks
+    for (let i = 0; i < (isCritical ? 18 : 10); i++) {
+      const sAngle = Math.random() * Math.PI * 2;
+      const sSpeed = 60 + Math.random() * 140;
+      this.particles.push({
+        x: targetMech.x,
+        y: targetMech.y,
+        vx: Math.cos(sAngle) * sSpeed,
+        vy: Math.sin(sAngle) * sSpeed,
+        color: isCritical ? '#f59e0b' : '#ffffff',
+        size: 2.5 + Math.random() * 2,
+        alpha: 1,
+        decay: 3.5,
+        type: 'SPARK',
+      });
+    }
+  }
+
+  public applyRemotePowerUpSpawn(powerUp: any) {
+    if (this.powerUps.some((p) => p.id === powerUp.id)) return;
+    this.powerUps.push({
+      id: powerUp.id,
+      type: powerUp.type,
+      x: powerUp.x,
+      y: powerUp.y,
+      radius: powerUp.radius || 16,
+      spawnTime: Date.now(),
+      duration: POWER_UP_DURATION,
+    });
+  }
+
+  public applyRemotePowerUpCollected(powerUpId: string, collectorRole: 'PLAYER_1' | 'PLAYER_2') {
+    const idx = this.powerUps.findIndex((p) => p.id === powerUpId);
+    const collectorMech = collectorRole === 'PLAYER_1' ? this.vex : this.nova;
+    let powerUpType: PowerUpType = 'SPEED_BOOST';
+
+    if (idx !== -1) {
+      powerUpType = this.powerUps[idx].type;
+      this.powerUps.splice(idx, 1);
+    }
+    this.pendingPowerUpCollects.delete(powerUpId);
+
+    this.collectPowerUp(collectorMech, {
+      id: powerUpId,
+      type: powerUpType,
+      x: collectorMech.x,
+      y: collectorMech.y,
+      radius: 16,
+      spawnTime: Date.now(),
+      duration: POWER_UP_DURATION,
+    });
+  }
+
+  public applyRemoteRoundFinished(
+    round: number,
+    winner: 'PLAYER_1' | 'PLAYER_2',
+    p1RoundsWon: number,
+    p2RoundsWon: number,
+    _matchOver: boolean
+  ) {
+    this.gameState = 'ROUND_END';
+    this.currentRound = round;
+    this.roundWinner = winner === 'PLAYER_1' ? 'VEX' : 'NOVA';
+    this.vexRoundsWon = p1RoundsWon;
+    this.novaRoundsWon = p2RoundsWon;
+    this.roundEndTimer = 3.0;
+
+    const amWinner = winner === this.localRole;
+    if (amWinner) {
+      soundManager.playRoundWon();
+      this.matchStats.roundWins++;
+      this.addFloatingText('ROUND WON!', ARENA_WIDTH / 2, ARENA_HEIGHT / 2, '#06b6d4', 1.8);
+    } else {
+      soundManager.playRoundLost();
+      this.matchStats.roundLosses++;
+      this.addFloatingText('ROUND LOST', ARENA_WIDTH / 2, ARENA_HEIGHT / 2, '#ef4444', 1.8);
+    }
+
+    if (this.onStateChange) this.onStateChange(this.gameState);
+  }
+
+  public applyRemoteMatchFinished(
+    winner: 'PLAYER_1' | 'PLAYER_2',
+    p1RoundsWon: number,
+    p2RoundsWon: number
+  ) {
+    this.vexRoundsWon = p1RoundsWon;
+    this.novaRoundsWon = p2RoundsWon;
+    const amWinner = winner === this.localRole;
+    this.gameState = amWinner ? 'VICTORY' : 'DEFEAT';
+    if (amWinner) {
+      soundManager.playVictory();
+    } else {
+      soundManager.playDefeat();
+    }
+    if (this.onStateChange) this.onStateChange(this.gameState);
   }
 
   private getEndlessDifficulty(level: number): DifficultyLevel {
@@ -513,7 +794,7 @@ export class GameEngine {
     }
   }
 
-  private resetRoundEntities() {
+  public resetRoundEntities() {
     // Reset positions
     this.vex.x = 180;
     this.vex.y = ARENA_HEIGHT / 2;
@@ -661,11 +942,38 @@ export class GameEngine {
   private updateBattle(dt: number) {
     this.matchStats.durationSeconds += dt;
 
-    // 1. Process Player Input for VEX
-    this.processPlayerInput(dt);
+    if (this.isMultiplayer) {
+      // In multiplayer: Local player controls their assigned mech
+      const localMech = this.localRole === 'PLAYER_1' ? this.vex : this.nova;
+      this.processPlayerInputForMech(localMech, dt);
 
-    // 2. Process AI Controller for NOVA
-    this.processAIInput(dt);
+      // Periodically sync local mech state to opponent via WebSocket (~20Hz / 50ms)
+      this.netSyncTimer += dt;
+      if (this.netSyncTimer >= 0.05) {
+        this.netSyncTimer = 0;
+        this.netSeq++;
+        if (this.onSendPlayerState) {
+          this.onSendPlayerState({
+            seq: this.netSeq,
+            x: Math.round(localMech.x * 10) / 10,
+            y: Math.round(localMech.y * 10) / 10,
+            vx: Math.round(localMech.vx),
+            vy: Math.round(localMech.vy),
+            angle: Math.round(localMech.angle * 100) / 100,
+            walkCycle: Math.round(localMech.walkCycle * 10) / 10,
+            isDashing: localMech.isDashing,
+            dashDirX: Math.round(localMech.dashDirX * 100) / 100,
+            dashDirY: Math.round(localMech.dashDirY * 100) / 100,
+          });
+        }
+      }
+    } else {
+      // 1. Process Player Input for VEX (Single Player)
+      this.processPlayerInput(dt);
+
+      // 2. Process AI Controller for NOVA
+      this.processAIInput(dt);
+    }
 
     // 3. Update Mech Physics & Cooldowns
     this.updateMech(this.vex, dt);
@@ -687,8 +995,8 @@ export class GameEngine {
     this.checkRoundDefeat();
   }
 
-  private processPlayerInput(dt: number) {
-    if (this.vex.hitStunTimer > 0 || this.vex.isDefeated) return;
+  private processPlayerInputForMech(mech: MechState, dt: number) {
+    if (mech.hitStunTimer > 0 || mech.isDefeated) return;
 
     // Movement axes (Keyboard WASD/Arrows)
     let dx = 0;
@@ -707,41 +1015,42 @@ export class GameEngine {
 
     const mag = Math.hypot(dx, dy);
     if (mag > 0) {
-      // Normalize if beyond 1 (handles simultaneous keys or strong joystick drag)
       const scale = mag > 1 ? 1 / mag : 1;
       dx *= scale;
       dy *= scale;
 
-      // Facing angle follows movement direction
-      this.vex.angle = Math.atan2(dy, dx);
-      this.vex.walkCycle += dt * 14;
+      mech.angle = Math.atan2(dy, dx);
+      mech.walkCycle += dt * 14;
 
-      const speed =
-        this.vex.speedBoostTimer > 0 ? SPEED_BOOST_SPEED : BASE_SPEED;
-      this.vex.vx = dx * speed;
-      this.vex.vy = dy * speed;
+      const speed = mech.speedBoostTimer > 0 ? SPEED_BOOST_SPEED : BASE_SPEED;
+      mech.vx = dx * speed;
+      mech.vy = dy * speed;
     } else {
-      this.vex.vx = 0;
-      this.vex.vy = 0;
+      mech.vx = 0;
+      mech.vy = 0;
     }
 
-    // Attack Action (F or Touch Attack)
+    // Attack Action
     if (this.keys['KeyF'] || this.touchAttackRequested) {
-      this.triggerAttack(this.vex);
+      this.triggerAttack(mech);
       this.touchAttackRequested = false;
     }
 
-    // Dash Action (G or Touch Dash)
+    // Dash Action
     if (this.keys['KeyG'] || this.touchDashRequested) {
-      this.triggerDash(this.vex, dx, dy);
+      this.triggerDash(mech, dx, dy);
       this.touchDashRequested = false;
     }
 
-    // Ultimate Action (Space or Touch Ultimate)
+    // Ultimate Action
     if (this.keys['Space'] || this.touchUltimateRequested) {
-      this.triggerUltimate(this.vex);
+      this.triggerUltimate(mech);
       this.touchUltimateRequested = false;
     }
+  }
+
+  private processPlayerInput(dt: number) {
+    this.processPlayerInputForMech(this.vex, dt);
   }
 
   private processAIInput(dt: number) {
@@ -799,6 +1108,23 @@ export class GameEngine {
     mech.attackCooldown = ATTACK_COOLDOWN;
 
     soundManager.playAttack(mech.hasPowerAttack);
+
+    if (this.isMultiplayer && this.onSendPlayerAttack) {
+      const isLocalMech = (this.localRole === 'PLAYER_1' && mech.id === 'VEX') ||
+                          (this.localRole === 'PLAYER_2' && mech.id === 'NOVA');
+      if (isLocalMech) {
+        this.onSendPlayerAttack({
+          id: 'atk_' + Date.now(),
+          attackerId: this.localRole,
+          type: 'SLASH',
+          x: mech.x,
+          y: mech.y,
+          angle: mech.angle,
+          hasPowerAttack: mech.hasPowerAttack,
+          timestamp: Date.now(),
+        });
+      }
+    }
   }
 
   public triggerDash(mech: MechState, inputDx: number, inputDy: number) {
@@ -836,6 +1162,14 @@ export class GameEngine {
         type: 'TRAIL',
       });
     }
+
+    if (this.isMultiplayer && this.onSendPlayerDash) {
+      const isLocalMech = (this.localRole === 'PLAYER_1' && mech.id === 'VEX') ||
+                          (this.localRole === 'PLAYER_2' && mech.id === 'NOVA');
+      if (isLocalMech) {
+        this.onSendPlayerDash(inputDx, inputDy);
+      }
+    }
   }
 
   public triggerUltimate(mech: MechState) {
@@ -869,19 +1203,38 @@ export class GameEngine {
 
     this.addFloatingText('ENERGY BURST!', mech.x, mech.y - 32, color, 1.3);
 
+    if (this.isMultiplayer && this.onSendPlayerUltimate) {
+      const isLocalMech = (this.localRole === 'PLAYER_1' && mech.id === 'VEX') ||
+                          (this.localRole === 'PLAYER_2' && mech.id === 'NOVA');
+      if (isLocalMech) {
+        this.onSendPlayerUltimate(mech.x, mech.y);
+      }
+    }
+
     // Hit opponent if in blast radius
     if (dist <= burstRadius + opponent.radius && opponent.invulnerableTimer <= 0) {
       const dmg = 24;
-      this.applyDamage(opponent, dmg, true, mech.id);
-      const pushAngle = Math.atan2(opponent.y - mech.y, opponent.x - mech.x);
-      opponent.x += Math.cos(pushAngle) * 35;
-      opponent.y += Math.sin(pushAngle) * 35;
-      opponent.hitStunTimer = HIT_STUN_DURATION;
-      opponent.invulnerableTimer = INVULNERABLE_AFTER_HIT;
-      soundManager.playHit(true);
-      if (mech.id === 'VEX') {
-        this.matchStats.damageDealt += dmg;
-        this.addScore(dmg * 12);
+      if (this.isMultiplayer) {
+        const isLocal =
+          (this.localRole === 'PLAYER_1' && mech.id === 'VEX') ||
+          (this.localRole === 'PLAYER_2' && mech.id === 'NOVA');
+        if (isLocal && this.onSendDamage) {
+          const targetRole = this.localRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
+          const newHp = Math.max(0, opponent.hp - dmg);
+          this.onSendDamage(targetRole, dmg, true, 'BURST', newHp);
+        }
+      } else {
+        this.applyDamage(opponent, dmg, true, mech.id);
+        const pushAngle = Math.atan2(opponent.y - mech.y, opponent.x - mech.x);
+        opponent.x += Math.cos(pushAngle) * 35;
+        opponent.y += Math.sin(pushAngle) * 35;
+        opponent.hitStunTimer = HIT_STUN_DURATION;
+        opponent.invulnerableTimer = INVULNERABLE_AFTER_HIT;
+        soundManager.playHit(true);
+        if (mech.id === 'VEX') {
+          this.matchStats.damageDealt += dmg;
+          this.addScore(dmg * 12);
+        }
       }
     }
   }
@@ -928,8 +1281,39 @@ export class GameEngine {
     }
 
     // Apply movement
-    mech.x += mech.vx * dt;
-    mech.y += mech.vy * dt;
+    if (this.isMultiplayer) {
+      const isRemote =
+        (this.localRole === 'PLAYER_1' && mech.id === 'NOVA') ||
+        (this.localRole === 'PLAYER_2' && mech.id === 'VEX');
+
+      if (isRemote && this.remoteTarget) {
+        const dx = this.remoteTarget.x - mech.x;
+        const dy = this.remoteTarget.y - mech.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist > 180) {
+          // Snap if large desync
+          mech.x = this.remoteTarget.x;
+          mech.y = this.remoteTarget.y;
+        } else {
+          // Smooth exponential lerp
+          mech.x += dx * Math.min(1, dt * 18);
+          mech.y += dy * Math.min(1, dt * 18);
+        }
+
+        mech.vx = this.remoteTarget.vx;
+        mech.vy = this.remoteTarget.vy;
+        mech.angle = this.remoteTarget.angle;
+        mech.walkCycle = this.remoteTarget.walkCycle;
+        mech.isDashing = this.remoteTarget.isDashing;
+      } else {
+        mech.x += mech.vx * dt;
+        mech.y += mech.vy * dt;
+      }
+    } else {
+      mech.x += mech.vx * dt;
+      mech.y += mech.vy * dt;
+    }
 
     // Obstacle collisions
     this.resolveObstacleCollision(mech);
@@ -1088,6 +1472,22 @@ export class GameEngine {
   }
 
   private updatePowerUps(dt: number) {
+    if (this.isMultiplayer) {
+      // In multiplayer, the server manages spawn intervals
+      // Local client checks collision and sends collect event
+      const localMech = this.localRole === 'PLAYER_1' ? this.vex : this.nova;
+      for (const p of this.powerUps) {
+        if (this.pendingPowerUpCollects.has(p.id)) continue;
+        if (Math.hypot(localMech.x - p.x, localMech.y - p.y) < localMech.radius + p.radius) {
+          this.pendingPowerUpCollects.add(p.id);
+          if (this.onSendCollectPowerUp) {
+            this.onSendCollectPowerUp(p.id, this.localRole);
+          }
+        }
+      }
+      return;
+    }
+
     this.powerUpSpawnTimer -= dt;
     if (this.powerUpSpawnTimer <= 0 && this.powerUps.length < 2) {
       this.spawnRandomPowerUp();
@@ -1202,6 +1602,19 @@ export class GameEngine {
   }
 
   private checkAttacks() {
+    if (this.isMultiplayer) {
+      if (this.localRole === 'PLAYER_1') {
+        if (this.vex.isAttacking && this.vex.attackTimer > 0.08) {
+          this.evaluateHit(this.vex, this.nova);
+        }
+      } else {
+        if (this.nova.isAttacking && this.nova.attackTimer > 0.08) {
+          this.evaluateHit(this.nova, this.vex);
+        }
+      }
+      return;
+    }
+
     // VEX attacking NOVA
     if (this.vex.isAttacking && this.vex.attackTimer > 0.08) {
       this.evaluateHit(this.vex, this.nova);
@@ -1246,8 +1659,16 @@ export class GameEngine {
         return;
       }
 
-      // Apply damage
-      this.applyDamage(defender, damage, isCritical, attacker.id);
+      if (this.isMultiplayer) {
+        const targetRole = this.localRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
+        const newHp = Math.max(0, defender.hp - damage);
+        if (this.onSendDamage) {
+          this.onSendDamage(targetRole, damage, isCritical, attacker.id, newHp);
+        }
+      } else {
+        // Apply damage locally in single player
+        this.applyDamage(defender, damage, isCritical, attacker.id);
+      }
 
       // Knockback impulse
       const knockSpeed = isCritical ? 260 : 180;
@@ -1261,13 +1682,15 @@ export class GameEngine {
       this.triggerScreenShake(isCritical ? 9 : 5);
 
       // Score bonus if player hit AI
-      if (attacker.id === 'VEX') {
-        this.matchStats.damageDealt += damage;
-        this.addScore(damage * 10 + (isCritical ? 100 : 0));
-      } else {
-        this.matchStats.damageReceived += damage;
-        if (attacker.aiBehaviorState === 'COUNTER') {
-          this.addFloatingText('COUNTER-STRIKE!', attacker.x, attacker.y - 30, '#f97316', 1.25);
+      if (!this.isMultiplayer) {
+        if (attacker.id === 'VEX') {
+          this.matchStats.damageDealt += damage;
+          this.addScore(damage * 10 + (isCritical ? 100 : 0));
+        } else {
+          this.matchStats.damageReceived += damage;
+          if (attacker.aiBehaviorState === 'COUNTER') {
+            this.addFloatingText('COUNTER-STRIKE!', attacker.x, attacker.y - 30, '#f97316', 1.25);
+          }
         }
       }
 
@@ -1320,6 +1743,8 @@ export class GameEngine {
   }
 
   private checkRoundDefeat() {
+    if (this.isMultiplayer) return;
+
     if (this.vex.hp <= 0 && !this.vex.isDefeated) {
       this.resolveRoundDefeat('VEX');
     } else if (this.nova.hp <= 0 && !this.nova.isDefeated) {

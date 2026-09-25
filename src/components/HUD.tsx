@@ -106,11 +106,19 @@ export const HUD: React.FC<HUDProps> = ({
         <div className="flex-1 max-w-[135px] xs:max-w-[170px] sm:max-w-xs pointer-events-auto bg-slate-950/85 backdrop-blur-md border border-cyan-500/30 rounded-lg p-1.5 sm:p-2.5 shadow-lg shadow-cyan-950/30">
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-1 sm:gap-2">
-              <span className="font-display font-extrabold text-cyan-400 text-xs sm:text-sm tracking-wider">
-                VEX
+              <span className="font-display font-extrabold text-cyan-400 text-xs sm:text-sm tracking-wider truncate max-w-[85px] sm:max-w-none">
+                {engine.isMultiplayer
+                  ? engine.localRole === 'PLAYER_1'
+                    ? engine.localPlayerName
+                    : engine.remotePlayerName
+                  : 'VEX'}
               </span>
               <span className="hidden sm:inline text-[10px] text-slate-400 font-mono-data uppercase">
-                [PLAYER]
+                {engine.isMultiplayer
+                  ? engine.localRole === 'PLAYER_1'
+                    ? '[YOU]'
+                    : '[P1]'
+                  : '[PLAYER]'}
               </span>
             </div>
             {/* Lives */}
@@ -178,7 +186,9 @@ export const HUD: React.FC<HUDProps> = ({
         {/* Center Match Status & Quick Actions */}
         <div className="flex flex-col items-center pointer-events-auto bg-slate-950/90 backdrop-blur-md border border-slate-800 rounded-lg px-2 sm:px-4 py-1 sm:py-2 shadow-lg">
           <div className="font-display text-[9px] sm:text-xs text-slate-400 uppercase tracking-widest leading-tight">
-            {engine.gameMode === 'CAMPAIGN'
+            {engine.isMultiplayer
+              ? `ROOM: ${engine.multiplayerRoomCode}`
+              : engine.gameMode === 'CAMPAIGN'
               ? `CH. ${Math.ceil(engine.currentLevel / 10)} • LVL ${engine.currentLevel}`
               : engine.gameMode === 'ENDLESS'
               ? `ENDLESS ${engine.currentLevel}`
@@ -190,11 +200,17 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-3 text-[10px] sm:text-xs font-mono-data text-slate-300 mt-0.5">
-            <span className="text-cyan-400 font-semibold">{engine.score.toLocaleString()}</span>
-            {engine.winStreak > 0 && (
-              <span className="hidden xs:flex items-center gap-0.5 text-amber-400">
-                <Award className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> {engine.winStreak}W
-              </span>
+            {engine.isMultiplayer ? (
+              <span className="text-purple-400 font-semibold tracking-wider">ONLINE 1V1</span>
+            ) : (
+              <>
+                <span className="text-cyan-400 font-semibold">{engine.score.toLocaleString()}</span>
+                {engine.winStreak > 0 && (
+                  <span className="hidden xs:flex items-center gap-0.5 text-amber-400">
+                    <Award className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> {engine.winStreak}W
+                  </span>
+                )}
+              </>
             )}
           </div>
 
@@ -241,24 +257,26 @@ export const HUD: React.FC<HUDProps> = ({
               {isMuted ? <VolumeX className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> : <Volume2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
             </button>
 
-            {/* Mobile friendly Pause Button */}
-            <button
-              onClick={onPause}
-              className="flex items-center justify-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded bg-slate-900 border border-slate-700 hover:border-cyan-500 text-slate-300 hover:text-cyan-400 transition-colors cursor-pointer"
-              title="Pause Game (P)"
-              aria-label="Pause"
-            >
-              <span className="font-display font-black text-xs sm:text-sm tracking-widest text-cyan-400">
-                Ⅱ
-              </span>
-              <span className="hidden sm:inline text-[10px] font-mono-data ml-0.5">
-                PAUSE [P]
-              </span>
-            </button>
+            {/* In Single Player show Pause, in Multiplayer show Exit */}
+            {!engine.isMultiplayer && (
+              <button
+                onClick={onPause}
+                className="flex items-center justify-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded bg-slate-900 border border-slate-700 hover:border-cyan-500 text-slate-300 hover:text-cyan-400 transition-colors cursor-pointer"
+                title="Pause Game (P)"
+                aria-label="Pause"
+              >
+                <span className="font-display font-black text-xs sm:text-sm tracking-widest text-cyan-400">
+                  Ⅱ
+                </span>
+                <span className="hidden sm:inline text-[10px] font-mono-data ml-0.5">
+                  PAUSE [P]
+                </span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* NOVA (AI) Panel */}
+        {/* NOVA (AI or Opponent) Panel */}
         <div
           className={`flex-1 max-w-[135px] xs:max-w-[170px] sm:max-w-xs pointer-events-auto bg-slate-950/85 backdrop-blur-md rounded-lg p-1.5 sm:p-2.5 shadow-lg ${
             nova.isBoss
@@ -288,7 +306,11 @@ export const HUD: React.FC<HUDProps> = ({
                   nova.isBoss ? 'text-amber-400 font-bold' : 'text-slate-400'
                 }`}
               >
-                {nova.isBoss
+                {engine.isMultiplayer
+                  ? engine.localRole === 'PLAYER_2'
+                    ? '[YOU]'
+                    : '[P2]'
+                  : nova.isBoss
                   ? nova.bossTier === 'FINAL_BOSS'
                     ? '[FINAL BOSS]'
                     : nova.bossTier === 'MAJOR_BOSS'
@@ -301,7 +323,11 @@ export const HUD: React.FC<HUDProps> = ({
                   nova.isBoss ? 'text-amber-400' : 'text-red-500'
                 }`}
               >
-                {nova.name}
+                {engine.isMultiplayer
+                  ? engine.localRole === 'PLAYER_2'
+                    ? engine.localPlayerName
+                    : engine.remotePlayerName
+                  : nova.name}
               </span>
             </div>
           </div>

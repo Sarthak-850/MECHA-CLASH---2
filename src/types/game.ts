@@ -2,7 +2,7 @@
  * Mecha Clash - Core Game Types
  */
 
-export type GameMode = 'QUICK_DUEL' | 'CAMPAIGN' | 'ENDLESS';
+export type GameMode = 'QUICK_DUEL' | 'CAMPAIGN' | 'ENDLESS' | 'MULTIPLAYER';
 
 export type DifficultyLevel =
   | 'NORMAL'
@@ -17,6 +17,7 @@ export type GameState =
   | 'DIFFICULTY_SELECT'
   | 'CAMPAIGN_SELECT'
   | 'HOW_TO_PLAY'
+  | 'MULTIPLAYER_LOBBY'
   | 'COUNTDOWN'
   | 'BATTLE'
   | 'ROUND_END'

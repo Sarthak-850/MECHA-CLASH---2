@@ -11,6 +11,8 @@ import { DifficultySelect } from './components/DifficultySelect';
 import { CampaignSelect } from './components/CampaignSelect';
 import { HowToPlay } from './components/HowToPlay';
 import { GameCanvas } from './components/GameCanvas';
+import { MultiplayerLobby } from './components/MultiplayerLobby';
+import { multiplayerClient } from './network/multiplayerClient';
 import {
   isFullscreenActive,
   requestAppFullscreen,
@@ -20,6 +22,7 @@ import {
 
 type AppScreen =
   | 'MENU'
+  | 'MULTIPLAYER_LOBBY'
   | 'DIFFICULTY_SELECT'
   | 'CAMPAIGN_SELECT'
   | 'HOW_TO_PLAY'
@@ -32,6 +35,12 @@ export default function App() {
   const [unlockedCampaignLevel, setUnlockedCampaignLevel] = useState<number>(1);
   const [isMuted, setIsMuted] = useState<boolean>(soundManager.getMuted());
   const [isFullscreen, setIsFullscreen] = useState<boolean>(isFullscreenActive());
+
+  // Multiplayer Match Over & Presence State
+  const [opponentDisconnected, setOpponentDisconnected] = useState<boolean>(false);
+  const [disconnectMessage, setDisconnectMessage] = useState<string>('');
+  const [rematchRequested, setRematchRequested] = useState<boolean>(false);
+  const [opponentRematchReady, setOpponentRematchReady] = useState<boolean>(false);
 
   const rootRef = useRef<HTMLElement | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
@@ -55,6 +64,84 @@ export default function App() {
       document.removeEventListener('webkitfullscreenchange', handleFullscreenSync);
     };
   }, []);
+
+  // Connect engine outgoing multiplayer callbacks to multiplayerClient
+  useEffect(() => {
+    engine.onSendPlayerState = (state) => multiplayerClient.sendPlayerState(state);
+    engine.onSendPlayerAttack = (attack) => multiplayerClient.sendPlayerAttack(attack);
+    engine.onSendPlayerDash = (dx, dy) => multiplayerClient.sendPlayerDash(dx, dy);
+    engine.onSendPlayerUltimate = (x, y) => multiplayerClient.sendPlayerUltimate(x, y);
+    engine.onSendDamage = (role, dmg, crit, src, hp) =>
+      multiplayerClient.sendDamage(role, dmg, crit, src, hp);
+    engine.onSendCollectPowerUp = (id, role) => multiplayerClient.sendCollectPowerUp(id, role);
+  }, [engine]);
+
+  // Wire incoming network events to engine when in PLAYING screen
+  useEffect(() => {
+    if (currentScreen !== 'PLAYING') return;
+
+    multiplayerClient.setCallbacks({
+      onRemotePlayerState: (role, state) => {
+        engine.applyRemotePlayerState(role, state);
+      },
+      onRemoteAttack: (attack) => {
+        engine.applyRemoteAttack(attack);
+      },
+      onRemoteDash: (role, dx, dy) => {
+        engine.applyRemoteDash(role, dx, dy);
+      },
+      onRemoteUltimate: (role, x, y) => {
+        engine.applyRemoteUltimate(role, x, y);
+      },
+      onDamageApplied: (targetRole, damage, isCritical, source, newHp) => {
+        engine.applyRemoteDamage(targetRole, damage, isCritical, source, newHp);
+      },
+      onPowerUpSpawn: (powerUp) => {
+        engine.applyRemotePowerUpSpawn(powerUp);
+      },
+      onPowerUpCollected: (powerUpId, collectorRole) => {
+        engine.applyRemotePowerUpCollected(powerUpId, collectorRole);
+      },
+      onRoundFinished: (round, winner, p1Wins, p2Wins, matchOver) => {
+        engine.applyRemoteRoundFinished(round, winner, p1Wins, p2Wins, matchOver);
+      },
+      onMatchFinished: (winner, p1Wins, p2Wins) => {
+        engine.applyRemoteMatchFinished(winner, p1Wins, p2Wins);
+      },
+      onCountdown: (step) => {
+        engine.countdownStep = step;
+        if (step === 0) {
+          engine.gameState = 'BATTLE';
+        } else {
+          engine.gameState = 'COUNTDOWN';
+        }
+        if (engine.onStateChange) engine.onStateChange(engine.gameState);
+      },
+      onStartMatch: () => {
+        setRematchRequested(false);
+        setOpponentRematchReady(false);
+        setOpponentDisconnected(false);
+        engine.resetRoundEntities();
+        engine.gameState = 'BATTLE';
+        if (engine.onStateChange) engine.onStateChange(engine.gameState);
+      },
+      onRoomState: (room) => {
+        if (engine.isMultiplayer) {
+          const isHost = engine.localRole === 'PLAYER_1';
+          const oppReady = isHost
+            ? room.players.PLAYER_2?.rematchReady || false
+            : room.players.PLAYER_1?.rematchReady || false;
+          setOpponentRematchReady(oppReady);
+        }
+      },
+      onOpponentDisconnected: (msg) => {
+        if (engine.isMultiplayer) {
+          setOpponentDisconnected(true);
+          setDisconnectMessage(msg);
+        }
+      },
+    });
+  }, [currentScreen, engine]);
 
   // Load saved progression from localStorage
   const refreshStorageData = useCallback(() => {
@@ -92,11 +179,38 @@ export default function App() {
     }
   }, []);
 
-  // Screen Transitions & Game Starters (Automatically requests fullscreen on mobile from existing Play taps)
+  // Screen Transitions & Game Starters
   const handleStartQuickDuel = useCallback(() => {
     ensureMobileFullscreen();
     setCurrentScreen('DIFFICULTY_SELECT');
   }, [ensureMobileFullscreen]);
+
+  const handleStartMultiplayer = useCallback(() => {
+    ensureMobileFullscreen();
+    setCurrentScreen('MULTIPLAYER_LOBBY');
+  }, [ensureMobileFullscreen]);
+
+  const handleMultiplayerMatchStarting = useCallback(
+    (
+      role: 'PLAYER_1' | 'PLAYER_2',
+      localName: string,
+      remoteName: string,
+      roomCode: string
+    ) => {
+      ensureMobileFullscreen();
+      setOpponentDisconnected(false);
+      setRematchRequested(false);
+      setOpponentRematchReady(false);
+      engine.startMultiplayerMatch(role, localName, remoteName, roomCode);
+      setCurrentScreen('PLAYING');
+    },
+    [engine, ensureMobileFullscreen]
+  );
+
+  const handleMultiplayerRematch = useCallback(() => {
+    setRematchRequested(true);
+    multiplayerClient.requestRematch();
+  }, []);
 
   const handleSelectDifficulty = useCallback(
     (diff: DifficultyLevel) => {
@@ -133,6 +247,13 @@ export default function App() {
   }, []);
 
   const handleBackToMenu = useCallback(() => {
+    if (engine.isMultiplayer) {
+      multiplayerClient.leaveRoom();
+      engine.isMultiplayer = false;
+    }
+    setOpponentDisconnected(false);
+    setRematchRequested(false);
+    setOpponentRematchReady(false);
     engine.gameState = 'MENU';
     refreshStorageData();
     setCurrentScreen('MENU');
@@ -159,12 +280,20 @@ export default function App() {
           onQuickDuel={handleStartQuickDuel}
           onCampaign={handleStartCampaign}
           onEndless={handleStartEndless}
+          onMultiplayer={handleStartMultiplayer}
           onHowToPlay={handleHowToPlay}
           onToggleMute={handleToggleMute}
           isMuted={isMuted}
           bestScore={bestScore}
           bestEndlessLevel={bestEndlessLevel}
           unlockedCampaignLevel={unlockedCampaignLevel}
+        />
+      )}
+
+      {currentScreen === 'MULTIPLAYER_LOBBY' && (
+        <MultiplayerLobby
+          onBack={handleBackToMenu}
+          onMatchStarting={handleMultiplayerMatchStarting}
         />
       )}
 
@@ -193,6 +322,11 @@ export default function App() {
           onMainMenu={handleBackToMenu}
           onToggleFullscreen={handleToggleFullscreen}
           isFullscreen={isFullscreen}
+          onMultiplayerRematch={handleMultiplayerRematch}
+          opponentDisconnected={opponentDisconnected}
+          disconnectMessage={disconnectMessage}
+          rematchRequested={rematchRequested}
+          opponentRematchReady={opponentRematchReady}
         />
       )}
     </main>

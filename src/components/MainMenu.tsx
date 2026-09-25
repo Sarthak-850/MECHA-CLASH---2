@@ -1,10 +1,11 @@
 import React from 'react';
-import { Volume2, VolumeX, Swords, Shield, HelpCircle, Trophy, Flame } from 'lucide-react';
+import { Volume2, VolumeX, Swords, Shield, HelpCircle, Trophy, Flame, Users } from 'lucide-react';
 
 interface MainMenuProps {
   onQuickDuel: () => void;
   onCampaign: () => void;
   onEndless: () => void;
+  onMultiplayer: () => void;
   onHowToPlay: () => void;
   onToggleMute: () => void;
   isMuted: boolean;
@@ -17,6 +18,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   onQuickDuel,
   onCampaign,
   onEndless,
+  onMultiplayer,
   onHowToPlay,
   onToggleMute,
   isMuted,
@@ -113,7 +115,19 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             <span className="flex items-center gap-2.5">
               <Swords className="w-4 h-4" /> QUICK DUEL
             </span>
-            <span className="text-[10px] sm:text-[11px] font-mono-data opacity-75">1V1 BATTLE</span>
+            <span className="text-[10px] sm:text-[11px] font-mono-data opacity-75">1V1 AI BATTLE</span>
+          </button>
+
+          <button
+            onClick={onMultiplayer}
+            className="w-full group flex items-center justify-between py-3 sm:py-3.5 px-5 sm:px-6 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-display font-bold text-xs sm:text-sm tracking-wider uppercase transition-all shadow-lg shadow-purple-600/30 hover:shadow-purple-500/50 hover:-translate-y-0.5 active:scale-98 cursor-pointer"
+          >
+            <span className="flex items-center gap-2.5">
+              <Users className="w-4 h-4 text-purple-200" /> MULTIPLAYER
+            </span>
+            <span className="text-[10px] sm:text-[11px] font-mono-data text-purple-200 bg-purple-950/60 px-2 py-0.5 rounded border border-purple-400/30">
+              ONLINE 1V1
+            </span>
           </button>
 
           <button

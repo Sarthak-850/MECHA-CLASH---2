@@ -9,6 +9,7 @@ import { RoundEndOverlay } from './RoundEndOverlay';
 import { PauseModal } from './PauseModal';
 import { VictoryModal } from './VictoryModal';
 import { DefeatModal } from './DefeatModal';
+import { MultiplayerModal } from './MultiplayerModal';
 import { VirtualControls } from './VirtualControls';
 import { soundManager } from '../audio/soundManager';
 import { RotateCw, X } from 'lucide-react';
@@ -19,6 +20,11 @@ interface GameCanvasProps {
   onMainMenu: () => void;
   onToggleFullscreen?: () => void;
   isFullscreen?: boolean;
+  onMultiplayerRematch?: () => void;
+  opponentDisconnected?: boolean;
+  disconnectMessage?: string;
+  rematchRequested?: boolean;
+  opponentRematchReady?: boolean;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -26,6 +32,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onMainMenu,
   onToggleFullscreen,
   isFullscreen: parentIsFullscreen,
+  onMultiplayerRematch,
+  opponentDisconnected = false,
+  disconnectMessage,
+  rematchRequested = false,
+  opponentRematchReady = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -328,8 +339,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             <RoundEndOverlay winner={roundWinner} round={engine.currentRound} />
           )}
 
-          {/* Pause Modal */}
-          {gameState === 'PAUSED' && (
+          {/* Pause Modal (Single player only) */}
+          {!engine.isMultiplayer && gameState === 'PAUSED' && (
             <PauseModal
               onResume={handleResume}
               onRestart={handleRestart}
@@ -337,8 +348,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             />
           )}
 
-          {/* Victory Modal */}
-          {gameState === 'VICTORY' && (
+          {/* Single Player Victory Modal */}
+          {!engine.isMultiplayer && gameState === 'VICTORY' && (
             <VictoryModal
               engine={engine}
               onNextLevel={handleNextLevel}
@@ -347,12 +358,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             />
           )}
 
-          {/* Defeat Modal */}
-          {gameState === 'DEFEAT' && (
+          {/* Single Player Defeat Modal */}
+          {!engine.isMultiplayer && gameState === 'DEFEAT' && (
             <DefeatModal
               engine={engine}
               onRetry={handleRestart}
               onMainMenu={onMainMenu}
+            />
+          )}
+
+          {/* Multiplayer Match End or Opponent Disconnected Modal */}
+          {engine.isMultiplayer && (gameState === 'VICTORY' || gameState === 'DEFEAT' || opponentDisconnected) && (
+            <MultiplayerModal
+              engine={engine}
+              isVictory={gameState === 'VICTORY'}
+              onRematch={onMultiplayerRematch || handleRestart}
+              onLeave={onMainMenu}
+              opponentDisconnected={opponentDisconnected}
+              disconnectMessage={disconnectMessage}
+              rematchRequested={rematchRequested}
+              opponentRematchReady={opponentRematchReady}
             />
           )}
 
