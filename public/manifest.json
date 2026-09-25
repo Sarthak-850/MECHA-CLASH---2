@@ -1,0 +1,27 @@
+{
+  "id": "/",
+  "name": "MECHA CLASH",
+  "short_name": "MECHA CLASH",
+  "description": "Futuristic 1-player vs AI arcade mecha battle game featuring responsive combat, adaptive AI, dynamic hazards, campaign, and endless modes.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["games", "action", "arcade"]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Mecha Clash",
+  "description": "Futuristic 1-player vs AI arcade mecha battle game featuring responsive combat, adaptive AI, dynamic hazards, campaign, and endless modes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
