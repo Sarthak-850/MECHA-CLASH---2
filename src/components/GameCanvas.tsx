@@ -12,8 +12,9 @@ import { DefeatModal } from './DefeatModal';
 import { MultiplayerModal } from './MultiplayerModal';
 import { VirtualControls } from './VirtualControls';
 import { soundManager } from '../audio/soundManager';
-import { RotateCw, X } from 'lucide-react';
+import { RotateCw } from 'lucide-react';
 import { isFullscreenActive } from '../utils/fullscreen';
+import { BatteryIndicator } from './BatteryIndicator';
 
 interface GameCanvasProps {
   engine: GameEngine;
@@ -87,7 +88,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         setShowTouchControls(true);
       }
 
-      const portrait = window.innerHeight > window.innerWidth && window.innerWidth < 800;
+      const portrait = window.innerHeight > window.innerWidth && window.innerWidth < 900;
       setIsPortrait(portrait);
     };
 
@@ -101,9 +102,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     };
 
-    window.addEventListener('resize', checkTouchAndOrientation);
+    window.addEventListener('resize', checkTouchAndOrientation, { passive: true });
     window.addEventListener('orientationchange', checkTouchAndOrientation);
-    window.addEventListener('pointerdown', handleGlobalPointerDown);
+    window.addEventListener('pointerdown', handleGlobalPointerDown, { passive: true });
 
     return () => {
       window.removeEventListener('resize', checkTouchAndOrientation);
@@ -278,55 +279,53 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full h-[100dvh] flex flex-col items-center justify-center bg-slate-950 overflow-hidden select-none touch-none ${
-        isFullscreen ? 'p-0' : ''
-      }`}
+      className="relative w-screen h-screen h-[100dvh] max-h-[100dvh] flex flex-col items-center justify-between bg-slate-950 overflow-hidden select-none touch-none"
       style={{ touchAction: 'none' }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* Portrait Suggestion Notice (Non-blocking, dismissible, as requested in Section 10) */}
+      {/* Portrait Suggestion Notice (Non-blocking, dismissible) */}
       {isPortrait && isTouchDevice && !dismissPortraitNotice && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 border border-cyan-500/50 text-cyan-300 py-2.5 px-4 rounded-xl shadow-2xl flex flex-col items-center gap-1.5 backdrop-blur-md max-w-[90vw] text-center animate-pulse">
-          <div className="flex items-center gap-2">
-            <RotateCw className="w-4 h-4 text-cyan-400 shrink-0" />
-            <span className="font-display font-black text-xs tracking-wider uppercase text-cyan-300">
-              ROTATE YOUR PHONE
-            </span>
-          </div>
-          <span className="text-[10px] text-slate-300 font-mono-data leading-tight">
-            Landscape mode is recommended for the best MECHA CLASH experience.
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 border border-cyan-500/50 text-cyan-300 py-1.5 px-3 rounded-lg shadow-xl flex items-center gap-2 backdrop-blur-md max-w-[90vw] text-center">
+          <RotateCw className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+          <span className="text-[10px] text-slate-200 font-mono-data leading-tight">
+            Rotate phone to landscape for widescreen
           </span>
           <button
             onClick={() => setDismissPortraitNotice(true)}
-            className="mt-1 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-mono-data cursor-pointer uppercase tracking-wider active:scale-95"
+            className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 hover:text-white text-[9px] font-mono-data cursor-pointer uppercase"
           >
-            Continue in Portrait
+            ✕
           </button>
         </div>
       )}
 
       {/* Responsive Aspect-Ratio Preserving Game Arena */}
-      <div className={`relative w-full h-full flex items-center justify-center ${isFullscreen ? 'p-0' : 'p-0.5 sm:p-2'}`}>
-        <div className={`relative w-full h-full max-w-[1280px] max-h-[100dvh] aspect-[960/600] flex items-center justify-center shadow-2xl ${
-          isFullscreen ? 'max-w-none max-h-none' : ''
-        }`}>
+      <div
+        className={`relative w-full h-full flex flex-col items-center ${
+          isPortrait ? 'justify-start pt-12 sm:pt-14' : 'justify-center'
+        }`}
+      >
+        {/* Arena Frame */}
+        <div
+          className="relative flex items-center justify-center shadow-2xl transition-all"
+          style={{
+            width: isPortrait ? '100%' : 'min(100vw, calc(100dvh * 1.6))',
+            maxWidth: isPortrait
+              ? '100vw'
+              : 'min(1280px, calc((100dvh - 8px) * 1.6))',
+            maxHeight: isPortrait
+              ? 'min(52dvh, calc(100vw * 0.625))'
+              : 'min(100dvh, calc(100vw * 0.625))',
+            aspectRatio: '960 / 600',
+          }}
+        >
           <canvas
             ref={canvasRef}
             width={ARENA_WIDTH}
             height={ARENA_HEIGHT}
             className={`w-full h-full block bg-slate-950 ${
-              isFullscreen ? 'rounded-none border-0' : 'rounded-xl border border-slate-800/80'
+              isFullscreen ? 'rounded-none border-0' : 'rounded-lg sm:rounded-xl border border-slate-800/80'
             } shadow-2xl object-contain`}
-          />
-
-          {/* HUD Overlay */}
-          <HUD
-            engine={engine}
-            onPause={handlePause}
-            onToggleMute={handleToggleMute}
-            isMuted={isMuted}
-            onToggleFullscreen={onToggleFullscreen}
-            isFullscreen={isFullscreen}
           />
 
           {/* Countdown Overlay */}
@@ -380,12 +379,41 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               opponentRematchReady={opponentRematchReady}
             />
           )}
-
-          {/* Mobile Virtual Controls (Joystick & Action Buttons) */}
-          {showTouchControls && (gameState === 'BATTLE' || gameState === 'COUNTDOWN') && (
-            <VirtualControls engine={engine} />
-          )}
         </div>
+
+        {/* HUD Container & Overlay - pinned to top */}
+        <div className="pointer-events-none select-none z-20 w-full">
+          <HUD
+            engine={engine}
+            onPause={handlePause}
+            onToggleMute={handleToggleMute}
+            isMuted={isMuted}
+            onToggleFullscreen={onToggleFullscreen}
+            isFullscreen={isFullscreen}
+          />
+
+          {/* Battery Percentage Indicator in Top-Right HUD Area for Mobile Users */}
+          <BatteryIndicator
+            className="absolute"
+            style={{
+              top: 'max(env(safe-area-inset-top, 0px), 4px)',
+              right: 'max(env(safe-area-inset-right, 0px), 6px)',
+            }}
+          />
+        </div>
+
+        {/* Mobile Virtual Controls */}
+        {showTouchControls && (gameState === 'BATTLE' || gameState === 'COUNTDOWN') && (
+          <div
+            className={`pointer-events-none select-none z-30 ${
+              isPortrait
+                ? 'flex-1 w-full relative flex items-end justify-between min-h-[120px]'
+                : 'absolute inset-0 flex items-end justify-between'
+            }`}
+          >
+            <VirtualControls engine={engine} />
+          </div>
+        )}
       </div>
     </div>
   );

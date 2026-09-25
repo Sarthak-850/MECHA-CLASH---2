@@ -21,11 +21,11 @@ export const RoundEndOverlay: React.FC<RoundEndOverlayProps> = ({
         </span>
 
         {isWon ? (
-          <div className="font-display font-black text-5xl sm:text-7xl text-cyan-400 tracking-wider drop-shadow-[0_0_30px_rgba(6,182,212,0.8)] glow-cyan">
+          <div className="font-display font-black text-3xl xs:text-4xl sm:text-6xl md:text-7xl text-cyan-400 tracking-wider drop-shadow-[0_0_30px_rgba(6,182,212,0.8)] glow-cyan text-center">
             ROUND WON
           </div>
         ) : (
-          <div className="font-display font-black text-5xl sm:text-7xl text-red-500 tracking-wider drop-shadow-[0_0_30px_rgba(239,68,68,0.8)] glow-crimson">
+          <div className="font-display font-black text-3xl xs:text-4xl sm:text-6xl md:text-7xl text-red-500 tracking-wider drop-shadow-[0_0_30px_rgba(239,68,68,0.8)] glow-crimson text-center">
             ROUND LOST
           </div>
         )}

@@ -20,11 +20,11 @@ export const CountdownOverlay: React.FC<CountdownOverlayProps> = ({
         </span>
 
         {count > 0 ? (
-          <div className="font-display font-black text-7xl sm:text-9xl text-white tracking-tighter drop-shadow-[0_0_35px_rgba(6,182,212,0.8)]">
+          <div className="font-display font-black text-5xl xs:text-6xl sm:text-8xl text-white tracking-tighter drop-shadow-[0_0_35px_rgba(6,182,212,0.8)]">
             {count}
           </div>
         ) : (
-          <div className="font-display font-black text-6xl sm:text-8xl text-amber-400 tracking-wider drop-shadow-[0_0_40px_rgba(245,158,11,0.9)] animate-bounce">
+          <div className="font-display font-black text-4xl xs:text-5xl sm:text-7xl text-amber-400 tracking-wider drop-shadow-[0_0_40px_rgba(245,158,11,0.9)] animate-bounce">
             FIGHT!
           </div>
         )}

@@ -27,17 +27,17 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   const durationStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
 
   return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-4 select-none animate-fadeIn">
-      <div className="w-full max-w-md bg-slate-900/95 border border-cyan-500/40 rounded-2xl p-5 sm:p-6 shadow-2xl shadow-cyan-950/60 flex flex-col items-center max-h-[92vh] overflow-y-auto">
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-2.5 sm:p-4 select-none animate-fadeIn">
+      <div className="w-full max-w-xs sm:max-w-md bg-slate-900/95 border border-cyan-500/40 rounded-xl sm:rounded-2xl p-4 sm:p-6 shadow-2xl shadow-cyan-950/60 flex flex-col items-center max-h-[92dvh] overflow-y-auto">
         {/* Victory Trophy Icon */}
-        <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mb-2 sm:mb-3 shadow-md shadow-cyan-500/20">
-          <Trophy className="w-6 h-6 sm:w-7 sm:h-7" />
+        <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mb-1.5 sm:mb-3 shadow-md shadow-cyan-500/20">
+          <Trophy className="w-5 h-5 sm:w-7 sm:h-7" />
         </div>
 
-        <h2 className="font-display font-black text-3xl sm:text-5xl text-cyan-400 tracking-wider uppercase mb-0.5 sm:mb-1 drop-shadow-[0_0_20px_rgba(6,182,212,0.6)] glow-cyan text-center">
+        <h2 className="font-display font-black text-2xl xs:text-3xl sm:text-5xl text-cyan-400 tracking-wider uppercase mb-0.5 drop-shadow-[0_0_20px_rgba(6,182,212,0.6)] glow-cyan text-center">
           {isCampaign && engine.currentLevel === 50 ? 'CAMPAIGN CONQUERED!' : 'VICTORY'}
         </h2>
-        <span className="text-xs text-slate-400 font-mono-data tracking-wide uppercase mb-3 sm:mb-4 text-center">
+        <span className="text-[10px] sm:text-xs text-slate-400 font-mono-data tracking-wide uppercase mb-2 sm:mb-4 text-center">
           {isCampaign
             ? engine.currentLevel === 50
               ? 'LEVEL 50 CLEARED • APEX OVERLORD VANQUISHED'
