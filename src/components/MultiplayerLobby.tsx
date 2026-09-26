@@ -46,10 +46,22 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [countdownMsg, setCountdownMsg] = useState<string | null>(null);
+  const [showDiag, setShowDiag] = useState<boolean>(false);
+  const [serverStatus, setServerStatus] = useState<{ checked: boolean; ok: boolean; latencyMs?: number }>({
+    checked: false,
+    ok: true,
+  });
 
   const timeoutTimerRef = useRef<any>(null);
   const roomStateRef = useRef<RoomStateSync | null>(null);
   roomStateRef.current = roomState;
+
+  // Probe server health on mount
+  useEffect(() => {
+    multiplayerClient.checkHealth().then((res) => {
+      setServerStatus({ checked: true, ok: res.ok, latencyMs: res.latencyMs });
+    });
+  }, []);
 
   // Clear timeout timer on unmount
   useEffect(() => {
@@ -132,16 +144,19 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
     setIsSubmitting(true);
     setView('CREATE');
 
-    // 7-second safety timeout so it NEVER stays stuck on loading
+    // 15-second safety timeout so mobile connections are not killed prematurely
     timeoutTimerRef.current = setTimeout(() => {
       setIsSubmitting((submitting) => {
         if (submitting) {
-          setErrorMsg('Unable to create room. Please check your connection.');
+          const diag = multiplayerClient.getLastDiagnostic();
+          setErrorMsg(
+            diag?.lastError || 'Unable to create room after 15s. Please check connection.'
+          );
           return false;
         }
         return submitting;
       });
-    }, 7000);
+    }, 15000);
 
     const validName = playerName.trim() || 'Pilot 1';
     try {
@@ -163,16 +178,19 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
     setErrorMsg(null);
     setIsSubmitting(true);
 
-    // 7-second safety timeout
+    // 15-second safety timeout
     timeoutTimerRef.current = setTimeout(() => {
       setIsSubmitting((submitting) => {
         if (submitting) {
-          setErrorMsg('Unable to join room. Please check your connection or code.');
+          const diag = multiplayerClient.getLastDiagnostic();
+          setErrorMsg(
+            diag?.lastError || 'Unable to join room after 15s. Please check connection or code.'
+          );
           return false;
         }
         return submitting;
       });
-    }, 7000);
+    }, 15000);
 
     const validName = playerName.trim() || 'Pilot 2';
     try {
@@ -273,6 +291,27 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         {/* VIEW 1: LOBBY OPTIONS MENU */}
         {view === 'MENU' && (
           <div className="w-full flex flex-col gap-2.5 sm:gap-3">
+            {/* Arena Backend Server Status Probe */}
+            <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-[10px] font-mono-data text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    serverStatus.ok
+                      ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] animate-pulse'
+                      : 'bg-rose-500'
+                  }`}
+                />
+                ARENA SERVER
+              </span>
+              <span className={serverStatus.ok ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
+                {serverStatus.checked
+                  ? serverStatus.ok
+                    ? `ONLINE (${serverStatus.latencyMs ?? 15}ms)`
+                    : 'OFFLINE'
+                  : 'CHECKING...'}
+              </span>
+            </div>
+
             {/* Player Pilot Name Input */}
             <div className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 sm:p-3 text-left">
               <label className="block text-[10px] xs:text-[11px] font-mono-data text-slate-400 uppercase tracking-wider mb-1">
@@ -338,9 +377,36 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                   <h3 className="font-display font-bold text-sm sm:text-base text-rose-300 uppercase">
                     UNABLE TO CREATE ROOM
                   </h3>
-                  <p className="text-xs font-mono-data text-slate-300 mt-1 max-w-xs">
+                  <p className="text-xs font-mono-data text-slate-300 mt-1 max-w-xs break-words">
                     {errorMsg}
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowDiag((v) => !v)}
+                    className="text-[10px] font-mono-data text-cyan-400 hover:text-cyan-300 underline cursor-pointer mt-1.5"
+                  >
+                    {showDiag ? 'Hide Diagnostics ▲' : 'Show Diagnostics ▼'}
+                  </button>
+                  {showDiag && (
+                    <div className="w-full mt-2 p-2 rounded-lg bg-slate-950/95 border border-slate-800 text-[9px] font-mono-data text-slate-300 text-left space-y-0.5 max-w-xs break-all shadow-inner">
+                      <div className="text-cyan-300 font-bold border-b border-slate-800 pb-0.5 mb-1">
+                        CONNECTION DIAGNOSTICS:
+                      </div>
+                      <div>Origin: <span className="text-slate-400">{typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : 'N/A'}</span></div>
+                      <div>Target WS: <span className="text-cyan-400">{multiplayerClient.getLastDiagnostic()?.wsUrl || multiplayerClient.getTargetBackend().wsBase}</span></div>
+                      <div>Target API: <span className="text-cyan-400">{multiplayerClient.getLastDiagnostic()?.apiUrl || multiplayerClient.getTargetBackend().apiBase}</span></div>
+                      <div>State: <span className="text-amber-400">{multiplayerClient.getLastDiagnostic()?.readyStateStr || multiplayerClient.getStatus()}</span></div>
+                      {multiplayerClient.getLastDiagnostic()?.closeCode && (
+                        <div>Close Code: <span className="text-rose-400 font-bold">{multiplayerClient.getLastDiagnostic()?.closeCode}</span></div>
+                      )}
+                      {multiplayerClient.getLastDiagnostic()?.closeReason && (
+                        <div>Reason: <span className="text-rose-300">{multiplayerClient.getLastDiagnostic()?.closeReason}</span></div>
+                      )}
+                      {multiplayerClient.getLastDiagnostic()?.lastError && (
+                        <div>Error: <span className="text-rose-300">{multiplayerClient.getLastDiagnostic()?.lastError}</span></div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 w-full max-w-xs mt-1">
                   <button
@@ -476,9 +542,38 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         {view === 'JOIN' && (
           <div className="w-full flex flex-col gap-3 bg-slate-900/90 border border-slate-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-xl text-left">
             {errorMsg && (
-              <div className="w-full p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-300 text-xs font-mono-data flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>{errorMsg}</span>
+              <div className="w-full flex flex-col gap-1.5 p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-300 text-xs font-mono-data">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span className="break-words">{errorMsg}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDiag((v) => !v)}
+                  className="text-[10px] font-mono-data text-cyan-400 hover:text-cyan-300 underline cursor-pointer text-left self-start mt-0.5"
+                >
+                  {showDiag ? 'Hide Diagnostics ▲' : 'Show Diagnostics ▼'}
+                </button>
+                {showDiag && (
+                  <div className="w-full mt-1 p-2 rounded-lg bg-slate-950/95 border border-slate-800 text-[9px] font-mono-data text-slate-300 text-left space-y-0.5 break-all shadow-inner">
+                    <div className="text-cyan-300 font-bold border-b border-slate-800 pb-0.5 mb-1">
+                      CONNECTION DIAGNOSTICS:
+                    </div>
+                    <div>Origin: <span className="text-slate-400">{typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : 'N/A'}</span></div>
+                    <div>Target WS: <span className="text-cyan-400">{multiplayerClient.getLastDiagnostic()?.wsUrl || multiplayerClient.getTargetBackend().wsBase}</span></div>
+                    <div>Target API: <span className="text-cyan-400">{multiplayerClient.getLastDiagnostic()?.apiUrl || multiplayerClient.getTargetBackend().apiBase}</span></div>
+                    <div>State: <span className="text-amber-400">{multiplayerClient.getLastDiagnostic()?.readyStateStr || multiplayerClient.getStatus()}</span></div>
+                    {multiplayerClient.getLastDiagnostic()?.closeCode && (
+                      <div>Close Code: <span className="text-rose-400 font-bold">{multiplayerClient.getLastDiagnostic()?.closeCode}</span></div>
+                    )}
+                    {multiplayerClient.getLastDiagnostic()?.closeReason && (
+                      <div>Reason: <span className="text-rose-300">{multiplayerClient.getLastDiagnostic()?.closeReason}</span></div>
+                    )}
+                    {multiplayerClient.getLastDiagnostic()?.lastError && (
+                      <div>Error: <span className="text-rose-300">{multiplayerClient.getLastDiagnostic()?.lastError}</span></div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

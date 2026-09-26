@@ -599,13 +599,24 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
   }
 });
 
-// Upgrade handling for WebSocket on /ws path or root
+// Upgrade handling for WebSocket on /ws, /ws/, or /api/ws path
 server.on('upgrade', (request, socket, head) => {
-  const url = request.url || '';
-  if (url.startsWith('/ws')) {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
+  try {
+    const host = request.headers.host || 'localhost';
+    const parsed = new URL(request.url || '', `http://${host}`);
+    const pathname = parsed.pathname;
+
+    if (pathname === '/ws' || pathname === '/ws/' || pathname === '/api/ws') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else {
+      // Cleanly destroy unrecognized upgrade requests so connections don't hang
+      socket.destroy();
+    }
+  } catch (err) {
+    console.error('Error handling WebSocket upgrade:', err);
+    socket.destroy();
   }
 });
 
@@ -747,14 +758,18 @@ app.post('/api/multiplayer/room/leave', (req, res) => {
   res.json({ success: true });
 });
 
-// Health check endpoint
-app.get('/api/health', (_req, res) => {
+// Health check endpoints (both /health and /api/health)
+const handleHealthCheck = (_req: express.Request, res: express.Response) => {
   res.json({
     status: 'ok',
     activeRooms: rooms.size,
     uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
   });
-});
+};
+
+app.get('/health', handleHealthCheck);
+app.get('/api/health', handleHealthCheck);
 
 // Setup Vite middleware in dev or static files in production
 async function startServer() {

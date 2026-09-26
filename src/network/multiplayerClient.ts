@@ -9,6 +9,19 @@ import {
 
 export type ConnectionStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
+export interface ConnectionDiagnostic {
+  pageProtocol: string;
+  pageHost: string;
+  wsUrl: string;
+  apiUrl: string;
+  readyState: number;
+  readyStateStr: string;
+  closeCode?: number;
+  closeReason?: string;
+  lastError?: string;
+  timestamp: string;
+}
+
 export interface MultiplayerClientCallbacks {
   onConnectionChange?: (status: ConnectionStatus) => void;
   onRoomCreated?: (roomCode: string, role: 'PLAYER_1') => void;
@@ -60,6 +73,7 @@ export class MultiplayerClient {
   private roomCode: string | null = null;
   private pendingMessages: ClientMessage[] = [];
   private connectPromise: Promise<boolean> | null = null;
+  private lastDiagnostic: ConnectionDiagnostic | null = null;
 
   constructor(callbacks: MultiplayerClientCallbacks = {}) {
     this.callbacks = callbacks;
@@ -85,22 +99,124 @@ export class MultiplayerClient {
     return this.playerId;
   }
 
-  private getWebSocketUrl(roomCode?: string, playerId?: string, role?: string): string {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    let url = `${protocol}//${window.location.host}/ws`;
+  public getLastDiagnostic(): ConnectionDiagnostic | null {
+    return this.lastDiagnostic;
+  }
+
+  /**
+   * Resolves target backend endpoints with support for:
+   * 1. Explicit VITE_MULTIPLAYER_URL or VITE_BACKEND_URL environment variables.
+   * 2. Automatic derivation from window.location in both development and production.
+   * 3. Enforces wss:// when page is loaded over https://.
+   */
+  public getTargetBackend(): { wsBase: string; apiBase: string } {
+    const rawEnv = (
+      (typeof import.meta !== 'undefined' && import.meta.env
+        ? (import.meta.env.VITE_MULTIPLAYER_URL || import.meta.env.VITE_BACKEND_URL)
+        : '') || ''
+    ).trim();
+
+    if (rawEnv) {
+      try {
+        const cleanUrl = rawEnv.replace(/\/+$/, '');
+        let wsBase = '';
+        let apiBase = '';
+
+        if (cleanUrl.startsWith('wss://') || cleanUrl.startsWith('ws://')) {
+          wsBase = cleanUrl;
+          apiBase = cleanUrl.replace(/^wss:\/\//, 'https://').replace(/^ws:\/\//, 'http://');
+        } else if (cleanUrl.startsWith('https://') || cleanUrl.startsWith('http://')) {
+          apiBase = cleanUrl;
+          wsBase = cleanUrl.replace(/^https:\/\//, 'wss://').replace(/^http:\/\//, 'ws://');
+        } else {
+          const isSecure = typeof window !== 'undefined' && (window.location.protocol === 'https:' || !cleanUrl.includes('localhost'));
+          wsBase = `${isSecure ? 'wss:' : 'ws:'}//${cleanUrl}`;
+          apiBase = `${isSecure ? 'https:' : 'http:'}//${cleanUrl}`;
+        }
+
+        // Ensure WebSocket endpoint targets /ws
+        if (!wsBase.endsWith('/ws')) {
+          wsBase = `${wsBase}/ws`;
+        }
+
+        return { wsBase, apiBase };
+      } catch (err) {
+        console.warn('[MultiplayerClient] Failed to parse custom backend URL:', err);
+      }
+    }
+
+    // Default: Use current browser host and origin
+    if (typeof window !== 'undefined') {
+      const isHttps = window.location.protocol === 'https:';
+      const host = window.location.host;
+      return {
+        wsBase: `${isHttps ? 'wss:' : 'ws:'}//${host}/ws`,
+        apiBase: window.location.origin,
+      };
+    }
+
+    return {
+      wsBase: 'ws://localhost:3000/ws',
+      apiBase: 'http://localhost:3000',
+    };
+  }
+
+  public getWebSocketUrl(roomCode?: string, playerId?: string, role?: string): string {
+    const { wsBase } = this.getTargetBackend();
     const params = new URLSearchParams();
     if (roomCode) params.set('roomCode', roomCode);
     if (playerId) params.set('playerId', playerId);
     if (role) params.set('role', role);
     const queryString = params.toString();
-    return queryString ? `${url}?${queryString}` : url;
+    return queryString ? `${wsBase}?${queryString}` : wsBase;
+  }
+
+  private getReadyStateString(state: number): string {
+    switch (state) {
+      case 0: return 'CONNECTING (0)';
+      case 1: return 'OPEN (1)';
+      case 2: return 'CLOSING (2)';
+      case 3: return 'CLOSED (3)';
+      default: return `UNKNOWN (${state})`;
+    }
   }
 
   /**
-   * Connects to WebSocket server with reliable promise tracking and message queueing.
-   * If already connecting, returns the active promise instead of prematurely resolving true.
+   * Diagnostic Health Check:
+   * Tests if the backend server is reachable via HTTP REST.
+   */
+  public async checkHealth(): Promise<{ ok: boolean; status?: string; latencyMs: number; error?: string }> {
+    const { apiBase } = this.getTargetBackend();
+    const start = performance.now();
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`${apiBase}/health`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const latencyMs = Math.round(performance.now() - start);
+      if (res.ok) {
+        const data = await res.json();
+        return { ok: true, status: data.status, latencyMs };
+      }
+      return { ok: false, latencyMs, error: `HTTP ${res.status}` };
+    } catch (err: any) {
+      const latencyMs = Math.round(performance.now() - start);
+      return { ok: false, latencyMs, error: err?.message || 'Connection failed' };
+    }
+  }
+
+  /**
+   * Connects to WebSocket server with robust lifecycle management:
+   * - Prevents duplicate or overlapping sockets
+   * - 12-second timeout adapted for mobile cellular handshakes
+   * - Detailed diagnostics recording close codes and target URLs
    */
   public connect(roomCode?: string, playerId?: string, role?: string): Promise<boolean> {
+    // 1. If socket is already fully OPEN, optionally attach and return true
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       if (roomCode && playerId && role) {
         this.send({
@@ -113,9 +229,13 @@ export class MultiplayerClient {
       return Promise.resolve(true);
     }
 
+    // 2. If a connection attempt is already in flight, reuse the promise
     if (this.connectPromise) {
       return this.connectPromise;
     }
+
+    // 3. Clean up any stale or closing sockets
+    this.cleanupSocket();
 
     this.manualDisconnect = false;
     this.updateStatus(this.reconnectAttempts > 0 ? 'RECONNECTING' : 'CONNECTING');
@@ -126,23 +246,30 @@ export class MultiplayerClient {
       const targetId = playerId || this.playerId || undefined;
       const targetRole = role || this.role || undefined;
       const url = this.getWebSocketUrl(targetRoom, targetId, targetRole);
+      const { apiBase } = this.getTargetBackend();
 
+      // Mobile networks may experience TLS handshake latency; use 12-second timeout
+      const CONNECTION_TIMEOUT_MS = 12000;
       let connectionTimeout: any = setTimeout(() => {
         if (!resolved) {
           resolved = true;
-          console.warn('[MultiplayerClient] Connection attempt timed out');
-          if (this.ws) {
-            try {
-              this.ws.close();
-            } catch {
-              // ignore
-            }
-          }
+          this.lastDiagnostic = {
+            pageProtocol: typeof window !== 'undefined' ? window.location.protocol : 'https:',
+            pageHost: typeof window !== 'undefined' ? window.location.host : 'unknown',
+            wsUrl: url,
+            apiUrl: apiBase,
+            readyState: this.ws ? this.ws.readyState : 3,
+            readyStateStr: this.ws ? this.getReadyStateString(this.ws.readyState) : 'CLOSED',
+            lastError: `Connection attempt timed out after ${CONNECTION_TIMEOUT_MS / 1000}s`,
+            timestamp: new Date().toISOString(),
+          };
+          console.warn('[MultiplayerClient] WebSocket connection timed out:', this.lastDiagnostic);
+          this.cleanupSocket();
           this.connectPromise = null;
           this.updateStatus('DISCONNECTED');
           resolve(false);
         }
-      }, 7000);
+      }, CONNECTION_TIMEOUT_MS);
 
       try {
         const socket = new WebSocket(url);
@@ -156,7 +283,17 @@ export class MultiplayerClient {
           this.updateStatus('CONNECTED');
           this.connectPromise = null;
 
-          // If room info is available, send attach message as well to guarantee association
+          this.lastDiagnostic = {
+            pageProtocol: window.location.protocol,
+            pageHost: window.location.host,
+            wsUrl: url,
+            apiUrl: apiBase,
+            readyState: socket.readyState,
+            readyStateStr: this.getReadyStateString(socket.readyState),
+            timestamp: new Date().toISOString(),
+          };
+
+          // Attach room metadata if available
           if (targetRoom && targetId && targetRole) {
             this.sendDirect(socket, {
               type: 'ATTACH_ROOM',
@@ -166,7 +303,7 @@ export class MultiplayerClient {
             });
           }
 
-          // Flush any messages queued during handshake
+          // Flush queued messages
           this.flushPendingMessages();
           resolve(true);
         };
@@ -176,11 +313,23 @@ export class MultiplayerClient {
             const msg: ServerMessage = JSON.parse(event.data);
             this.handleServerMessage(msg);
           } catch (err) {
-            console.error('Failed to parse server message:', err);
+            console.error('[MultiplayerClient] Failed to parse server message:', err);
           }
         };
 
-        socket.onclose = () => {
+        socket.onclose = (event) => {
+          this.lastDiagnostic = {
+            pageProtocol: typeof window !== 'undefined' ? window.location.protocol : 'https:',
+            pageHost: typeof window !== 'undefined' ? window.location.host : 'unknown',
+            wsUrl: url,
+            apiUrl: apiBase,
+            readyState: socket.readyState,
+            readyStateStr: this.getReadyStateString(socket.readyState),
+            closeCode: event.code,
+            closeReason: event.reason || (event.code === 1006 ? 'Connection terminated abnormally (Code 1006)' : ''),
+            timestamp: new Date().toISOString(),
+          };
+
           if (!resolved) {
             resolved = true;
             clearTimeout(connectionTimeout);
@@ -196,18 +345,26 @@ export class MultiplayerClient {
         };
 
         socket.onerror = (err) => {
-          console.warn('WebSocket connection event error:', err);
+          console.warn('[MultiplayerClient] WebSocket event error:', err);
           if (!resolved) {
-            resolved = true;
-            clearTimeout(connectionTimeout);
-            this.connectPromise = null;
-            this.updateStatus('DISCONNECTED');
-            resolve(false);
+            if (this.lastDiagnostic) {
+              this.lastDiagnostic.lastError = 'WebSocket connection failed';
+            }
           }
         };
-      } catch (err) {
-        console.error('Failed to construct WebSocket:', err);
+      } catch (err: any) {
+        console.error('[MultiplayerClient] Failed to construct WebSocket:', err);
         clearTimeout(connectionTimeout);
+        this.lastDiagnostic = {
+          pageProtocol: typeof window !== 'undefined' ? window.location.protocol : 'https:',
+          pageHost: typeof window !== 'undefined' ? window.location.host : 'unknown',
+          wsUrl: url,
+          apiUrl: apiBase,
+          readyState: 3,
+          readyStateStr: 'FAILED_TO_CONSTRUCT',
+          lastError: err?.message || 'WebSocket constructor error',
+          timestamp: new Date().toISOString(),
+        };
         this.connectPromise = null;
         this.updateStatus('DISCONNECTED');
         resolve(false);
@@ -215,6 +372,23 @@ export class MultiplayerClient {
     });
 
     return this.connectPromise;
+  }
+
+  private cleanupSocket() {
+    if (this.ws) {
+      try {
+        this.ws.onopen = null;
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.onmessage = null;
+        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+          this.ws.close();
+        }
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+    }
   }
 
   private flushPendingMessages() {
@@ -267,36 +441,39 @@ export class MultiplayerClient {
 
   /**
    * Device-Independent Room Creation:
-   * Uses REST API first for sub-50ms deterministic creation on cellular or Wi-Fi,
-   * with AbortController timeout to prevent mobile browser hangs.
-   * Then attaches WebSocket for 60fps real-time gameplay.
-   * Fallback to direct WebSocket if REST fails, enforced by an overall mandatory timeout.
+   * 1. Primary path: REST POST to ${apiBase}/api/multiplayer/room/create (8-second timeout)
+   * 2. Connects and attaches WebSocket for real-time match state
+   * 3. Fallback path: Direct WebSocket CREATE_ROOM with 15-second mandatory timeout
+   * 4. Reports exact connection diagnostics on failure instead of generic messages
    */
   public async createRoom(playerName: string): Promise<boolean> {
     const validName = playerName.trim() || 'Player 1';
     this.pendingPlayerName = validName;
 
-    const TIMEOUT_MS = 6000;
+    const OVERALL_TIMEOUT_MS = 15000;
     let timedOut = false;
 
     return new Promise<boolean>(async (resolve) => {
-      // Mandatory timeout handler with user-facing error state
+      // Mandatory timeout handler
       const mandatoryTimer = setTimeout(() => {
         timedOut = true;
-        const errorMsg =
-          'Room creation timed out. Please check that mobile browser privacy restrictions or connection settings do not block network requests.';
+        const diag = this.lastDiagnostic;
+        const detail = diag?.wsUrl ? ` (Target: ${diag.wsUrl})` : '';
+        const errorMsg = `Room creation timed out after 15s${detail}. Please check network connection.`;
         if (this.callbacks.onError) {
           this.callbacks.onError(errorMsg);
         }
         resolve(false);
-      }, TIMEOUT_MS);
+      }, OVERALL_TIMEOUT_MS);
 
-      // 1. Primary path: REST POST with AbortController timeout
+      const { apiBase } = this.getTargetBackend();
+
+      // 1. Primary path: REST POST with AbortController timeout (8s)
       const controller = new AbortController();
-      const fetchTimer = setTimeout(() => controller.abort(), 3500);
+      const fetchTimer = setTimeout(() => controller.abort(), 8000);
 
       try {
-        const res = await fetch('/api/multiplayer/room/create', {
+        const res = await fetch(`${apiBase}/api/multiplayer/room/create`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ playerName: validName }),
@@ -320,7 +497,9 @@ export class MultiplayerClient {
             }
 
             // Connect WebSocket channel attached to this specific room
-            this.connect(data.roomCode, data.playerId, 'PLAYER_1').catch(() => {});
+            this.connect(data.roomCode, data.playerId, 'PLAYER_1').catch((err) => {
+              console.warn('[MultiplayerClient] WebSocket attach warning:', err);
+            });
             resolve(true);
             return;
           }
@@ -357,8 +536,16 @@ export class MultiplayerClient {
         clearTimeout(mandatoryTimer);
         this.callbacks.onRoomCreated = prevOnRoomCreated;
         this.callbacks.onError = prevOnError;
-        const connErr =
-          'Unable to establish arena channel. Please check mobile browser privacy restrictions or connection.';
+
+        const diag = this.lastDiagnostic;
+        let detail = 'Server connection failed';
+        if (diag?.closeCode) {
+          detail = `Server closed socket (Code: ${diag.closeCode}${diag.closeReason ? ' - ' + diag.closeReason : ''})`;
+        } else if (diag?.lastError) {
+          detail = diag.lastError;
+        }
+
+        const connErr = `Unable to connect to multiplayer server: ${detail}. Target: ${diag?.wsUrl || apiBase}`;
         if (this.callbacks.onError) {
           this.callbacks.onError(connErr);
         }
@@ -376,7 +563,7 @@ export class MultiplayerClient {
   /**
    * Device-Independent Room Joining:
    * Uses REST API first to validate code and register Player 2,
-   * then connects/attaches WebSocket with mandatory timeout.
+   * then connects WebSocket channel with 15-second mandatory timeout.
    */
   public async joinRoom(roomCode: string, playerName: string): Promise<boolean> {
     const cleanCode = roomCode.trim().toUpperCase();
@@ -384,27 +571,30 @@ export class MultiplayerClient {
     this.pendingRoomCode = cleanCode;
     this.pendingPlayerName = validName;
 
-    const TIMEOUT_MS = 6000;
+    const OVERALL_TIMEOUT_MS = 15000;
     let timedOut = false;
 
     return new Promise<boolean>(async (resolve) => {
       // Mandatory timeout handler
       const mandatoryTimer = setTimeout(() => {
         timedOut = true;
-        const errorMsg =
-          'Joining room timed out. Please check that mobile browser privacy restrictions or connection settings do not block network requests.';
+        const diag = this.lastDiagnostic;
+        const detail = diag?.wsUrl ? ` (Target: ${diag.wsUrl})` : '';
+        const errorMsg = `Joining room timed out after 15s${detail}. Please check network connection.`;
         if (this.callbacks.onError) {
           this.callbacks.onError(errorMsg);
         }
         resolve(false);
-      }, TIMEOUT_MS);
+      }, OVERALL_TIMEOUT_MS);
 
-      // 1. Primary path: REST POST with AbortController
+      const { apiBase } = this.getTargetBackend();
+
+      // 1. Primary path: REST POST with AbortController (8s)
       const controller = new AbortController();
-      const fetchTimer = setTimeout(() => controller.abort(), 3500);
+      const fetchTimer = setTimeout(() => controller.abort(), 8000);
 
       try {
-        const res = await fetch('/api/multiplayer/room/join', {
+        const res = await fetch(`${apiBase}/api/multiplayer/room/join`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ roomCode: cleanCode, playerName: validName }),
@@ -437,7 +627,9 @@ export class MultiplayerClient {
           }
 
           // Connect WebSocket channel attached to this room
-          this.connect(cleanCode, data.playerId, 'PLAYER_2').catch(() => {});
+          this.connect(cleanCode, data.playerId, 'PLAYER_2').catch((err) => {
+            console.warn('[MultiplayerClient] WebSocket attach warning:', err);
+          });
           resolve(true);
           return;
         }
@@ -473,8 +665,18 @@ export class MultiplayerClient {
         clearTimeout(mandatoryTimer);
         this.callbacks.onRoomJoined = prevOnRoomJoined;
         this.callbacks.onError = prevOnError;
+
+        const diag = this.lastDiagnostic;
+        let detail = 'Server connection failed';
+        if (diag?.closeCode) {
+          detail = `Server closed socket (Code: ${diag.closeCode}${diag.closeReason ? ' - ' + diag.closeReason : ''})`;
+        } else if (diag?.lastError) {
+          detail = diag.lastError;
+        }
+
+        const connErr = `Unable to connect to game server: ${detail}. Target: ${diag?.wsUrl || apiBase}`;
         if (this.callbacks.onError) {
-          this.callbacks.onError('Unable to connect to game server. Please check your connection.');
+          this.callbacks.onError(connErr);
         }
         resolve(false);
         return;
@@ -494,7 +696,8 @@ export class MultiplayerClient {
 
     if (this.roomCode) {
       try {
-        fetch('/api/multiplayer/room/leave', {
+        const { apiBase } = this.getTargetBackend();
+        fetch(`${apiBase}/api/multiplayer/room/leave`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ roomCode: this.roomCode, playerId: this.playerId }),
@@ -506,14 +709,7 @@ export class MultiplayerClient {
     }
 
     this.send({ type: 'LEAVE_ROOM' });
-    if (this.ws) {
-      try {
-        this.ws.close();
-      } catch {
-        // ignore
-      }
-      this.ws = null;
-    }
+    this.cleanupSocket();
     this.role = null;
     this.playerId = null;
     this.roomCode = null;
@@ -604,7 +800,7 @@ export class MultiplayerClient {
     try {
       socket.send(JSON.stringify(msg));
     } catch (err) {
-      console.error('Failed to send WebSocket message:', err);
+      console.error('[MultiplayerClient] Failed to send WebSocket message:', err);
     }
   }
 
