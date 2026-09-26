@@ -138,8 +138,6 @@ export class GameRenderer {
     ctx.moveTo(centerX, centerY - 160);
     ctx.lineTo(centerX, centerY + 160);
     ctx.stroke();
-
-    ctx.restore();
   }
 
   private drawCollapsingPlatforms(platforms: CollapsingPlatform[]) {
@@ -733,11 +731,12 @@ export class GameRenderer {
 
   private drawParticles(particles: Particle[], drawOver: boolean) {
     const ctx = this.ctx;
+    const prevAlpha = ctx.globalAlpha;
+
     for (const p of particles) {
       const isOver = p.type === 'SPARK' || p.type === 'SHOCKWAVE';
       if (isOver !== drawOver) continue;
 
-      ctx.save();
       ctx.globalAlpha = Math.max(0, p.alpha);
 
       if (p.type === 'SHOCKWAVE') {
@@ -752,24 +751,31 @@ export class GameRenderer {
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fill();
       }
-
-      ctx.restore();
     }
+
+    ctx.globalAlpha = prevAlpha;
   }
 
   private drawFloatingTexts(floatingTexts: FloatingText[]) {
+    if (floatingTexts.length === 0) return;
     const ctx = this.ctx;
+    const prevAlpha = ctx.globalAlpha;
+    const prevAlign = ctx.textAlign;
+
+    ctx.textAlign = 'center';
+
     for (const t of floatingTexts) {
-      ctx.save();
       ctx.globalAlpha = Math.max(0, t.alpha);
       ctx.font = `bold ${Math.floor(14 * t.scale)}px Orbitron, sans-serif`;
-      ctx.textAlign = 'center';
       ctx.fillStyle = t.color;
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 6;
       ctx.shadowColor = t.color;
       ctx.fillText(t.text, t.x, t.y);
-      ctx.restore();
     }
+
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = prevAlpha;
+    ctx.textAlign = prevAlign;
   }
 
   private drawArenaBorders(theme: string) {

@@ -268,65 +268,115 @@ export class MultiplayerClient {
   /**
    * Device-Independent Room Creation:
    * Uses REST API first for sub-50ms deterministic creation on cellular or Wi-Fi,
-   * then attaches WebSocket for 60fps real-time gameplay.
-   * Fallback to direct WebSocket if REST fails.
+   * with AbortController timeout to prevent mobile browser hangs.
+   * Then attaches WebSocket for 60fps real-time gameplay.
+   * Fallback to direct WebSocket if REST fails, enforced by an overall mandatory timeout.
    */
   public async createRoom(playerName: string): Promise<boolean> {
     const validName = playerName.trim() || 'Player 1';
     this.pendingPlayerName = validName;
 
-    // 1. Primary path: REST POST for instant, guaranteed room creation across any phone or laptop
-    try {
-      const res = await fetch('/api/multiplayer/room/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerName: validName }),
-      });
+    const TIMEOUT_MS = 6000;
+    let timedOut = false;
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.roomCode) {
-          this.roomCode = data.roomCode;
-          this.role = 'PLAYER_1';
-          this.playerId = data.playerId;
-
-          if (this.callbacks.onRoomCreated) {
-            this.callbacks.onRoomCreated(data.roomCode, 'PLAYER_1');
-          }
-          if (data.room && this.callbacks.onRoomState) {
-            this.callbacks.onRoomState(data.room);
-          }
-
-          // Connect WebSocket channel attached to this specific room
-          this.connect(data.roomCode, data.playerId, 'PLAYER_1').catch(() => {});
-          return true;
+    return new Promise<boolean>(async (resolve) => {
+      // Mandatory timeout handler with user-facing error state
+      const mandatoryTimer = setTimeout(() => {
+        timedOut = true;
+        const errorMsg =
+          'Room creation timed out. Please check that mobile browser privacy restrictions or connection settings do not block network requests.';
+        if (this.callbacks.onError) {
+          this.callbacks.onError(errorMsg);
         }
-      }
-    } catch {
-      // Network/offline fallback to direct WebSocket attempt
-    }
+        resolve(false);
+      }, TIMEOUT_MS);
 
-    // 2. Direct WebSocket fallback
-    const ok = await this.connect();
-    if (!ok) {
-      if (this.callbacks.onError) {
-        this.callbacks.onError('Unable to create room. Please check your connection.');
-      }
-      return false;
-    }
+      // 1. Primary path: REST POST with AbortController timeout
+      const controller = new AbortController();
+      const fetchTimer = setTimeout(() => controller.abort(), 3500);
 
-    this.send({
-      type: 'CREATE_ROOM',
-      playerName: validName,
+      try {
+        const res = await fetch('/api/multiplayer/room/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerName: validName }),
+          signal: controller.signal,
+        });
+        clearTimeout(fetchTimer);
+
+        if (!timedOut && res.ok) {
+          const data = await res.json();
+          if (data.success && data.roomCode) {
+            clearTimeout(mandatoryTimer);
+            this.roomCode = data.roomCode;
+            this.role = 'PLAYER_1';
+            this.playerId = data.playerId;
+
+            if (this.callbacks.onRoomCreated) {
+              this.callbacks.onRoomCreated(data.roomCode, 'PLAYER_1');
+            }
+            if (data.room && this.callbacks.onRoomState) {
+              this.callbacks.onRoomState(data.room);
+            }
+
+            // Connect WebSocket channel attached to this specific room
+            this.connect(data.roomCode, data.playerId, 'PLAYER_1').catch(() => {});
+            resolve(true);
+            return;
+          }
+        }
+      } catch (err) {
+        clearTimeout(fetchTimer);
+        // Fallback to WebSocket path if REST failed or aborted
+      }
+
+      if (timedOut) return;
+
+      // 2. Direct WebSocket fallback with response listener
+      const prevOnRoomCreated = this.callbacks.onRoomCreated;
+      const prevOnError = this.callbacks.onError;
+
+      this.callbacks.onRoomCreated = (code, role) => {
+        clearTimeout(mandatoryTimer);
+        this.callbacks.onRoomCreated = prevOnRoomCreated;
+        this.callbacks.onError = prevOnError;
+        if (prevOnRoomCreated) prevOnRoomCreated(code, role);
+        resolve(true);
+      };
+
+      this.callbacks.onError = (msg) => {
+        clearTimeout(mandatoryTimer);
+        this.callbacks.onRoomCreated = prevOnRoomCreated;
+        this.callbacks.onError = prevOnError;
+        if (prevOnError) prevOnError(msg);
+        resolve(false);
+      };
+
+      const ok = await this.connect();
+      if (!ok) {
+        clearTimeout(mandatoryTimer);
+        this.callbacks.onRoomCreated = prevOnRoomCreated;
+        this.callbacks.onError = prevOnError;
+        const connErr =
+          'Unable to establish arena channel. Please check mobile browser privacy restrictions or connection.';
+        if (this.callbacks.onError) {
+          this.callbacks.onError(connErr);
+        }
+        resolve(false);
+        return;
+      }
+
+      this.send({
+        type: 'CREATE_ROOM',
+        playerName: validName,
+      });
     });
-    return true;
   }
 
   /**
    * Device-Independent Room Joining:
    * Uses REST API first to validate code and register Player 2,
-   * then connects/attaches WebSocket.
-   * Proper error messages for room not found / room full.
+   * then connects/attaches WebSocket with mandatory timeout.
    */
   public async joinRoom(roomCode: string, playerName: string): Promise<boolean> {
     const cleanCode = roomCode.trim().toUpperCase();
@@ -334,56 +384,108 @@ export class MultiplayerClient {
     this.pendingRoomCode = cleanCode;
     this.pendingPlayerName = validName;
 
-    // 1. Primary path: REST POST for validation and instant joining
-    try {
-      const res = await fetch('/api/multiplayer/room/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomCode: cleanCode, playerName: validName }),
-      });
+    const TIMEOUT_MS = 6000;
+    let timedOut = false;
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        const errorMsg = data.message || 'Unable to join room. Please check the code.';
+    return new Promise<boolean>(async (resolve) => {
+      // Mandatory timeout handler
+      const mandatoryTimer = setTimeout(() => {
+        timedOut = true;
+        const errorMsg =
+          'Joining room timed out. Please check that mobile browser privacy restrictions or connection settings do not block network requests.';
         if (this.callbacks.onError) {
           this.callbacks.onError(errorMsg);
         }
-        return false;
+        resolve(false);
+      }, TIMEOUT_MS);
+
+      // 1. Primary path: REST POST with AbortController
+      const controller = new AbortController();
+      const fetchTimer = setTimeout(() => controller.abort(), 3500);
+
+      try {
+        const res = await fetch('/api/multiplayer/room/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roomCode: cleanCode, playerName: validName }),
+          signal: controller.signal,
+        });
+        clearTimeout(fetchTimer);
+
+        if (!timedOut) {
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            clearTimeout(mandatoryTimer);
+            const errorMsg = data.message || 'Unable to join room. Please check the code.';
+            if (this.callbacks.onError) {
+              this.callbacks.onError(errorMsg);
+            }
+            resolve(false);
+            return;
+          }
+
+          clearTimeout(mandatoryTimer);
+          this.roomCode = cleanCode;
+          this.role = 'PLAYER_2';
+          this.playerId = data.playerId;
+
+          if (this.callbacks.onRoomJoined) {
+            this.callbacks.onRoomJoined(cleanCode, 'PLAYER_2');
+          }
+          if (data.room && this.callbacks.onRoomState) {
+            this.callbacks.onRoomState(data.room);
+          }
+
+          // Connect WebSocket channel attached to this room
+          this.connect(cleanCode, data.playerId, 'PLAYER_2').catch(() => {});
+          resolve(true);
+          return;
+        }
+      } catch {
+        clearTimeout(fetchTimer);
+        // Fallback to WebSocket join
       }
 
-      this.roomCode = cleanCode;
-      this.role = 'PLAYER_2';
-      this.playerId = data.playerId;
+      if (timedOut) return;
 
-      if (this.callbacks.onRoomJoined) {
-        this.callbacks.onRoomJoined(cleanCode, 'PLAYER_2');
+      // 2. Direct WebSocket fallback with response listener
+      const prevOnRoomJoined = this.callbacks.onRoomJoined;
+      const prevOnError = this.callbacks.onError;
+
+      this.callbacks.onRoomJoined = (code, role) => {
+        clearTimeout(mandatoryTimer);
+        this.callbacks.onRoomJoined = prevOnRoomJoined;
+        this.callbacks.onError = prevOnError;
+        if (prevOnRoomJoined) prevOnRoomJoined(code, role);
+        resolve(true);
+      };
+
+      this.callbacks.onError = (msg) => {
+        clearTimeout(mandatoryTimer);
+        this.callbacks.onRoomJoined = prevOnRoomJoined;
+        this.callbacks.onError = prevOnError;
+        if (prevOnError) prevOnError(msg);
+        resolve(false);
+      };
+
+      const ok = await this.connect();
+      if (!ok) {
+        clearTimeout(mandatoryTimer);
+        this.callbacks.onRoomJoined = prevOnRoomJoined;
+        this.callbacks.onError = prevOnError;
+        if (this.callbacks.onError) {
+          this.callbacks.onError('Unable to connect to game server. Please check your connection.');
+        }
+        resolve(false);
+        return;
       }
-      if (data.room && this.callbacks.onRoomState) {
-        this.callbacks.onRoomState(data.room);
-      }
 
-      // Connect WebSocket channel attached to this room
-      this.connect(cleanCode, data.playerId, 'PLAYER_2').catch(() => {});
-      return true;
-    } catch {
-      // Network fallback to WebSocket join
-    }
-
-    // 2. Direct WebSocket fallback
-    const ok = await this.connect();
-    if (!ok) {
-      if (this.callbacks.onError) {
-        this.callbacks.onError('Unable to connect to game server. Please check your connection.');
-      }
-      return false;
-    }
-
-    this.send({
-      type: 'JOIN_ROOM',
-      roomCode: cleanCode,
-      playerName: validName,
+      this.send({
+        type: 'JOIN_ROOM',
+        roomCode: cleanCode,
+        playerName: validName,
+      });
     });
-    return true;
   }
 
   public leaveRoom() {

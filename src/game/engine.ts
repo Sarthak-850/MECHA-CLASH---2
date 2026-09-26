@@ -2,6 +2,7 @@ import { soundManager } from '../audio/soundManager';
 import {
   AIDifficultyConfig,
   CollapsingPlatform,
+  DebugPerformanceMetrics,
   DifficultyLevel,
   FloatingText,
   GameMode,
@@ -85,6 +86,21 @@ export class GameEngine {
     perfectRounds: 0,
     roundWins: 0,
     roundLosses: 0,
+  };
+
+  // Performance telemetry for dev overlay
+  public metrics: DebugPerformanceMetrics = {
+    fps: 60,
+    frameTimeMs: 16.6,
+    simulationDt: 0.016,
+    activeParticles: 0,
+    activeFloatingTexts: 0,
+    screenShake: 0,
+    vexPos: { x: 180, y: 300 },
+    novaPos: { x: 780, y: 300 },
+    vexHp: 100,
+    novaHp: 100,
+    isMultiplayer: false,
   };
 
   // Keyboard input states
@@ -195,6 +211,7 @@ export class GameEngine {
       speedBoostTimer: 0,
       hasShield: false,
       hasPowerAttack: false,
+      hasHitThisSwing: false,
     };
   }
 
@@ -316,6 +333,7 @@ export class GameEngine {
     if (!this.isMultiplayer) return;
     const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
     remoteMech.isAttacking = true;
+    remoteMech.hasHitThisSwing = false;
     remoteMech.attackTimer = ATTACK_DURATION;
     remoteMech.attackCooldown = ATTACK_COOLDOWN;
     remoteMech.hasPowerAttack = Boolean(attack.hasPowerAttack);
@@ -815,6 +833,7 @@ export class GameEngine {
     this.vex.speedBoostTimer = 0;
     this.vex.hasShield = false;
     this.vex.hasPowerAttack = false;
+    this.vex.hasHitThisSwing = false;
 
     this.nova.x = ARENA_WIDTH - 180;
     this.nova.y = ARENA_HEIGHT / 2;
@@ -835,6 +854,7 @@ export class GameEngine {
     this.nova.speedBoostTimer = 0;
     this.nova.hasShield = false;
     this.nova.hasPowerAttack = false;
+    this.nova.hasHitThisSwing = false;
 
     this.powerUps = [];
     this.particles = [];
@@ -863,6 +883,21 @@ export class GameEngine {
     } else {
       this.screenShake = { x: 0, y: 0 };
     }
+
+    // Refresh metrics for performance telemetry
+    this.metrics.simulationDt = Math.round(dt * 10000) / 10;
+    this.metrics.activeParticles = this.particles.length;
+    this.metrics.activeFloatingTexts = this.floatingTexts.length;
+    this.metrics.screenShake = Math.round(this.shakeIntensity * 10) / 10;
+    this.metrics.vexPos.x = Math.round(this.vex.x);
+    this.metrics.vexPos.y = Math.round(this.vex.y);
+    this.metrics.novaPos.x = Math.round(this.nova.x);
+    this.metrics.novaPos.y = Math.round(this.nova.y);
+    this.metrics.vexHp = Math.round(this.vex.hp);
+    this.metrics.novaHp = Math.round(this.nova.hp);
+    this.metrics.aiState = this.nova.aiBehaviorState;
+    this.metrics.aiPersonality = this.nova.aiPersonality;
+    this.metrics.isMultiplayer = this.isMultiplayer;
 
     // Update particles & floating texts
     this.updateParticles(dt);
@@ -1104,6 +1139,7 @@ export class GameEngine {
     if (mech.attackCooldown > 0 || mech.isAttacking || mech.isDashing) return;
 
     mech.isAttacking = true;
+    mech.hasHitThisSwing = false;
     mech.attackTimer = ATTACK_DURATION;
     mech.attackCooldown = ATTACK_COOLDOWN;
 
@@ -1287,18 +1323,22 @@ export class GameEngine {
         (this.localRole === 'PLAYER_2' && mech.id === 'VEX');
 
       if (isRemote && this.remoteTarget) {
-        const dx = this.remoteTarget.x - mech.x;
-        const dy = this.remoteTarget.y - mech.y;
+        // Dead-reckoning: predict subtle forward movement between network ticks
+        const targetX = this.remoteTarget.x + this.remoteTarget.vx * (dt * 0.35);
+        const targetY = this.remoteTarget.y + this.remoteTarget.vy * (dt * 0.35);
+        const dx = targetX - mech.x;
+        const dy = targetY - mech.y;
         const dist = Math.hypot(dx, dy);
 
         if (dist > 180) {
-          // Snap if large desync
+          // Snap if massive desync
           mech.x = this.remoteTarget.x;
           mech.y = this.remoteTarget.y;
         } else {
-          // Smooth exponential lerp
-          mech.x += dx * Math.min(1, dt * 18);
-          mech.y += dy * Math.min(1, dt * 18);
+          // Frame-rate independent exponential smoothing
+          const blend = 1 - Math.exp(-22 * dt);
+          mech.x += dx * blend;
+          mech.y += dy * blend;
         }
 
         mech.vx = this.remoteTarget.vx;
@@ -1320,10 +1360,8 @@ export class GameEngine {
 
     // Arena boundary containment
     const r = mech.radius;
-    if (mech.x < r + 10) mech.x = r + 10;
-    if (mech.x > ARENA_WIDTH - r - 10) mech.x = ARENA_WIDTH - r - 10;
-    if (mech.y < r + 10) mech.y = r + 10;
-    if (mech.y > ARENA_HEIGHT - r - 10) mech.y = ARENA_HEIGHT - r - 10;
+    mech.x = Math.max(r + 10, Math.min(ARENA_WIDTH - r - 10, mech.x));
+    mech.y = Math.max(r + 10, Math.min(ARENA_HEIGHT - r - 10, mech.y));
   }
 
   private resolveObstacleCollision(mech: MechState) {
@@ -1604,11 +1642,11 @@ export class GameEngine {
   private checkAttacks() {
     if (this.isMultiplayer) {
       if (this.localRole === 'PLAYER_1') {
-        if (this.vex.isAttacking && this.vex.attackTimer > 0.08) {
+        if (this.vex.isAttacking && !this.vex.hasHitThisSwing && this.vex.attackTimer > 0.04) {
           this.evaluateHit(this.vex, this.nova);
         }
       } else {
-        if (this.nova.isAttacking && this.nova.attackTimer > 0.08) {
+        if (this.nova.isAttacking && !this.nova.hasHitThisSwing && this.nova.attackTimer > 0.04) {
           this.evaluateHit(this.nova, this.vex);
         }
       }
@@ -1616,17 +1654,17 @@ export class GameEngine {
     }
 
     // VEX attacking NOVA
-    if (this.vex.isAttacking && this.vex.attackTimer > 0.08) {
+    if (this.vex.isAttacking && !this.vex.hasHitThisSwing && this.vex.attackTimer > 0.04) {
       this.evaluateHit(this.vex, this.nova);
     }
     // NOVA attacking VEX
-    if (this.nova.isAttacking && this.nova.attackTimer > 0.08) {
+    if (this.nova.isAttacking && !this.nova.hasHitThisSwing && this.nova.attackTimer > 0.04) {
       this.evaluateHit(this.nova, this.vex);
     }
   }
 
   private evaluateHit(attacker: MechState, defender: MechState) {
-    if (defender.invulnerableTimer > 0 || defender.hitStunTimer > 0) return;
+    if (defender.invulnerableTimer > 0 || defender.hitStunTimer > 0 || attacker.hasHitThisSwing) return;
 
     const dx = defender.x - attacker.x;
     const dy = defender.y - attacker.y;
@@ -1642,6 +1680,9 @@ export class GameEngine {
     angleDiff = Math.abs(angleDiff);
 
     if (angleDiff <= attacker.attackArc / 2) {
+      // Mark hit confirmed so this swing never hits again
+      attacker.hasHitThisSwing = true;
+
       // HIT LANDED!
       const isCritical = attacker.hasPowerAttack;
       const damage = isCritical ? POWER_ATTACK_DAMAGE : BASE_ATTACK_DAMAGE;
@@ -1843,6 +1884,9 @@ export class GameEngine {
   }
 
   private updateParticles(dt: number) {
+    if (this.particles.length > 180) {
+      this.particles.splice(0, this.particles.length - 180);
+    }
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.x += p.vx * dt;

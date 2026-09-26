@@ -167,6 +167,24 @@ export interface MechState {
   speedBoostTimer: number;
   hasShield: boolean;
   hasPowerAttack: boolean;
+  hasHitThisSwing?: boolean;
+}
+
+export interface DebugPerformanceMetrics {
+  fps: number;
+  frameTimeMs: number;
+  simulationDt: number;
+  activeParticles: number;
+  activeFloatingTexts: number;
+  screenShake: number;
+  vexPos: { x: number; y: number };
+  novaPos: { x: number; y: number };
+  vexHp: number;
+  novaHp: number;
+  aiState?: string;
+  aiPersonality?: string;
+  isMultiplayer: boolean;
+  pingMs?: number;
 }
 
 export interface Particle {
