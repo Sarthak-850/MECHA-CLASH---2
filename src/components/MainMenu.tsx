@@ -28,12 +28,13 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 }) => {
   return (
     <div
-      className="relative w-full min-h-screen min-h-[100dvh] flex flex-col items-center justify-between p-3 xs:p-4 sm:p-8 bg-slate-950 overflow-y-auto overflow-x-hidden select-none"
+      className="relative w-full h-full min-h-[100dvh] flex flex-col items-center justify-between p-3 xs:p-4 sm:p-8 bg-slate-950 overflow-y-auto overflow-x-hidden select-none"
       style={{
         paddingTop: 'max(env(safe-area-inset-top, 0px), 12px)',
         paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)',
         paddingLeft: 'max(env(safe-area-inset-left, 0px), 12px)',
         paddingRight: 'max(env(safe-area-inset-right, 0px), 12px)',
+        overscrollBehavior: 'contain',
       }}
     >
       {/* Dynamic Cyber Grid & Animated Horizon Background */}

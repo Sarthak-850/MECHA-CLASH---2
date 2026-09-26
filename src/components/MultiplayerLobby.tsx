@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { multiplayerClient } from '../network/multiplayerClient';
 import { RoomStateSync } from '../types/multiplayer';
 import {
@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Wifi,
   Sparkles,
+  RotateCcw,
 } from 'lucide-react';
 
 interface MultiplayerLobbyProps {
@@ -46,7 +47,18 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [countdownMsg, setCountdownMsg] = useState<string | null>(null);
 
-  // Save player name
+  const timeoutTimerRef = useRef<any>(null);
+  const roomStateRef = useRef<RoomStateSync | null>(null);
+  roomStateRef.current = roomState;
+
+  // Clear timeout timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+    };
+  }, []);
+
+  // Save player name to local storage
   const handleNameChange = (val: string) => {
     const trimmed = val.substring(0, 16);
     setPlayerName(trimmed);
@@ -61,11 +73,13 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   useEffect(() => {
     multiplayerClient.setCallbacks({
       onRoomCreated: (code, _role) => {
+        if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
         setCreatedRoomCode(code);
         setIsSubmitting(false);
         setErrorMsg(null);
       },
       onRoomJoined: (_code, _role) => {
+        if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
         setIsSubmitting(false);
         setErrorMsg(null);
       },
@@ -87,14 +101,16 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         const code = multiplayerClient.getRoomCode();
         if (!role || !code) return;
 
-        const p1Name = roomState?.players.PLAYER_1?.name || 'Player 1';
-        const p2Name = roomState?.players.PLAYER_2?.name || 'Player 2';
+        const current = roomStateRef.current;
+        const p1Name = current?.players.PLAYER_1?.name || 'Player 1';
+        const p2Name = current?.players.PLAYER_2?.name || 'Player 2';
         const localName = role === 'PLAYER_1' ? p1Name : p2Name;
         const remoteName = role === 'PLAYER_1' ? p2Name : p1Name;
 
         onMatchStarting(role, localName, remoteName, code);
       },
       onError: (msg) => {
+        if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
         setErrorMsg(msg);
         setIsSubmitting(false);
       },
@@ -105,16 +121,36 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
     });
 
     return () => {
-      multiplayerClient.setCallbacks({});
+      // Don't wipe callbacks if moving to match
     };
-  }, [onMatchStarting, roomState]);
+  }, [onMatchStarting]);
 
   const handleCreateRoom = useCallback(async () => {
+    if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
     setErrorMsg(null);
+    setCreatedRoomCode('');
     setIsSubmitting(true);
     setView('CREATE');
+
+    // 7-second safety timeout so it NEVER stays stuck on loading
+    timeoutTimerRef.current = setTimeout(() => {
+      setIsSubmitting((submitting) => {
+        if (submitting) {
+          setErrorMsg('Unable to create room. Please check your connection.');
+          return false;
+        }
+        return submitting;
+      });
+    }, 7000);
+
     const validName = playerName.trim() || 'Pilot 1';
-    await multiplayerClient.createRoom(validName);
+    try {
+      await multiplayerClient.createRoom(validName);
+    } catch {
+      if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+      setErrorMsg('Unable to create room. Please check your connection.');
+      setIsSubmitting(false);
+    }
   }, [playerName]);
 
   const handleJoinRoom = useCallback(async () => {
@@ -123,18 +159,39 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
       setErrorMsg('Please enter a room code.');
       return;
     }
+    if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
     setErrorMsg(null);
     setIsSubmitting(true);
+
+    // 7-second safety timeout
+    timeoutTimerRef.current = setTimeout(() => {
+      setIsSubmitting((submitting) => {
+        if (submitting) {
+          setErrorMsg('Unable to join room. Please check your connection or code.');
+          return false;
+        }
+        return submitting;
+      });
+    }, 7000);
+
     const validName = playerName.trim() || 'Pilot 2';
-    await multiplayerClient.joinRoom(cleanCode, validName);
+    try {
+      await multiplayerClient.joinRoom(cleanCode, validName);
+    } catch {
+      if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
+      setErrorMsg('Unable to connect to room. Please try again.');
+      setIsSubmitting(false);
+    }
   }, [joinCodeInput, playerName]);
 
   const handleCancelRoom = useCallback(() => {
+    if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
     multiplayerClient.leaveRoom();
     setCreatedRoomCode('');
     setRoomState(null);
     setErrorMsg(null);
     setCountdownMsg(null);
+    setIsSubmitting(false);
     setView('MENU');
   }, []);
 
@@ -160,12 +217,13 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
 
   return (
     <div
-      className="relative w-full min-h-screen min-h-[100dvh] flex flex-col items-center justify-between p-3 xs:p-4 sm:p-8 bg-slate-950 overflow-y-auto overflow-x-hidden select-none"
+      className="relative w-full h-full min-h-[100dvh] flex flex-col items-center justify-between p-3 xs:p-4 sm:p-8 bg-slate-950 overflow-y-auto overflow-x-hidden select-none"
       style={{
         paddingTop: 'max(env(safe-area-inset-top, 0px), 12px)',
         paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 12px)',
         paddingLeft: 'max(env(safe-area-inset-left, 0px), 12px)',
         paddingRight: 'max(env(safe-area-inset-right, 0px), 12px)',
+        overscrollBehavior: 'contain',
       }}
     >
       {/* Dynamic Cyber Grid Background */}
@@ -204,8 +262,8 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
           Duel against a friend on any phone, tablet, or laptop in real time.
         </p>
 
-        {/* Global Error Banner */}
-        {errorMsg && (
+        {/* Global Error Banner (Only in Menu view, specific views handle inline) */}
+        {errorMsg && view === 'MENU' && (
           <div className="w-full mb-3 p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-300 text-xs font-mono-data flex items-center gap-2 text-left">
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
             <span>{errorMsg}</span>
@@ -267,20 +325,63 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
           </div>
         )}
 
-        {/* VIEW 2: CREATE ROOM (HOST WAITING FOR OPPONENT) */}
+        {/* VIEW 2: CREATE ROOM (HOST WAITING FOR OPPONENT OR ERROR) */}
         {view === 'CREATE' && (
           <div className="w-full flex flex-col items-center gap-3 bg-slate-900/90 border border-slate-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-xl">
-            {isSubmitting || !createdRoomCode ? (
-              <div className="flex flex-col items-center gap-2 py-4">
-                <Loader2 className="w-6 h-6 text-cyan-400 animate-spin" />
-                <span className="text-xs font-mono-data text-slate-300">
-                  CONNECTING TO ARENA CHANNEL...
+            {/* SUB-STATE 2A: ERROR ON CREATION (Never stuck!) */}
+            {errorMsg && !createdRoomCode ? (
+              <div className="w-full flex flex-col items-center gap-3 py-3 text-center animate-fadeIn">
+                <div className="w-10 h-10 rounded-full bg-rose-950/80 border border-rose-500/50 flex items-center justify-center text-rose-400">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-sm sm:text-base text-rose-300 uppercase">
+                    UNABLE TO CREATE ROOM
+                  </h3>
+                  <p className="text-xs font-mono-data text-slate-300 mt-1 max-w-xs">
+                    {errorMsg}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 w-full max-w-xs mt-1">
+                  <button
+                    type="button"
+                    onClick={handleCreateRoom}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-display font-bold text-xs tracking-wider uppercase transition-all active:scale-95 cursor-pointer shadow-md shadow-cyan-500/20"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> RETRY
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelRoom}
+                    className="flex-1 py-2 px-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white font-display font-semibold text-xs tracking-wider uppercase transition-all active:scale-95 cursor-pointer"
+                  >
+                    BACK
+                  </button>
+                </div>
+              </div>
+            ) : isSubmitting && !createdRoomCode ? (
+              /* SUB-STATE 2B: LOADING SPINNER WITH CANCEL BUTTON */
+              <div className="flex flex-col items-center gap-3 py-4">
+                <Loader2 className="w-7 h-7 text-cyan-400 animate-spin" />
+                <span className="text-xs font-mono-data text-slate-300 font-semibold tracking-wide">
+                  CREATING ONLINE ARENA ROOM...
                 </span>
+                <span className="text-[10px] font-mono-data text-slate-500">
+                  Connecting across devices...
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCancelRoom}
+                  className="mt-2 py-1.5 px-4 rounded-lg bg-slate-950 border border-slate-700 hover:border-slate-500 text-slate-400 hover:text-white text-xs font-mono-data transition-colors cursor-pointer"
+                >
+                  CANCEL
+                </button>
               </div>
             ) : (
+              /* SUB-STATE 2C: ROOM SUCCESSFULLY CREATED */
               <>
                 <div className="text-[10px] xs:text-xs font-mono-data text-slate-400 uppercase tracking-wider">
-                  SHARE THIS CODE WITH YOUR FRIEND:
+                  SHARE THIS CODE WITH YOUR OPPONENT:
                 </div>
 
                 {/* Room Code Display */}
@@ -317,7 +418,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                 ) : (
                   <div className="flex items-center gap-1.5 text-[11px] font-mono-data text-slate-400">
                     <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                    <span>Waiting for opponent...</span>
+                    <span>Waiting for opponent to join...</span>
                   </div>
                 )}
 
@@ -349,7 +450,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                             : 'text-slate-500 italic'
                         }`}
                       >
-                        {roomState?.players.PLAYER_2?.name || 'WAITING FOR PLAYER...'}
+                        {roomState?.players.PLAYER_2?.name || 'WAITING FOR OPPONENT...'}
                       </span>
                     </div>
                     <span className="text-[9px] sm:text-[10px] text-red-400 uppercase tracking-wider font-display shrink-0">
@@ -374,6 +475,13 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         {/* VIEW 3: JOIN ROOM */}
         {view === 'JOIN' && (
           <div className="w-full flex flex-col gap-3 bg-slate-900/90 border border-slate-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-5 shadow-xl text-left">
+            {errorMsg && (
+              <div className="w-full p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-300 text-xs font-mono-data flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
             <div>
               <label className="block text-[10px] xs:text-[11px] font-mono-data text-slate-400 uppercase tracking-wider mb-1">
                 YOUR PILOT CALLSIGN
@@ -448,7 +556,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
       {/* Footer Info */}
       <div className="w-full max-w-xl flex flex-col sm:flex-row items-center justify-between text-[9px] xs:text-[10px] sm:text-[11px] font-mono-data text-slate-400 z-10 gap-1 mt-1 text-center">
         <span>CROSS-DEVICE MULTIPLAYER • WI-FI & MOBILE DATA</span>
-        <span>PEER SYNC OVER SECURE WEBSOCKETS</span>
+        <span>DEVICE INDEPENDENT • REAL-TIME WEBSOCKETS</span>
       </div>
     </div>
   );

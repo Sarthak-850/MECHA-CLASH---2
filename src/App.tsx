@@ -272,12 +272,13 @@ export default function App() {
   return (
     <main
       ref={rootRef}
-      className={`w-full bg-slate-950 flex flex-col items-center justify-center overflow-x-hidden ${
-        currentScreen === 'PLAYING'
-          ? 'w-screen h-screen h-[100dvh] max-h-[100dvh] overflow-hidden select-none touch-none fixed inset-0'
-          : 'min-h-screen min-h-[100dvh] overflow-y-auto'
+      className={`fixed inset-0 w-full h-full h-[100dvh] max-h-[100dvh] bg-slate-950 flex flex-col items-center justify-center overflow-hidden select-none ${
+        currentScreen === 'PLAYING' ? 'touch-none' : ''
       }`}
-      style={currentScreen === 'PLAYING' ? { touchAction: 'none' } : undefined}
+      style={{
+        overscrollBehavior: 'none',
+        touchAction: currentScreen === 'PLAYING' ? 'none' : 'auto',
+      }}
     >
       {currentScreen === 'MENU' && (
         <MainMenu

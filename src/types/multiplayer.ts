@@ -69,6 +69,7 @@ export interface RoomStateSync {
 export type ClientMessage =
   | { type: 'CREATE_ROOM'; playerName: string }
   | { type: 'JOIN_ROOM'; roomCode: string; playerName: string }
+  | { type: 'ATTACH_ROOM'; roomCode: string; playerId: string; role: 'PLAYER_1' | 'PLAYER_2' }
   | { type: 'LEAVE_ROOM' }
   | { type: 'REQUEST_REMATCH' }
   | {

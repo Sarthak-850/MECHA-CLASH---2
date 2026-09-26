@@ -279,10 +279,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative w-screen h-screen h-[100dvh] max-h-[100dvh] flex flex-col items-center justify-between bg-slate-950 overflow-hidden select-none touch-none"
-      style={{ touchAction: 'none' }}
+      className="fixed inset-0 w-screen h-screen h-[100dvh] max-h-[100dvh] flex flex-col items-center justify-center bg-slate-950 overflow-hidden select-none touch-none"
+      style={{
+        contain: 'strict',
+        overscrollBehavior: 'none',
+        touchAction: 'none',
+      }}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {/* HUD Container & Overlay - pinned to top */}
+      <div className="absolute top-0 left-0 right-0 pointer-events-none select-none z-20 w-full">
+        <HUD
+          engine={engine}
+          onPause={handlePause}
+          onToggleMute={handleToggleMute}
+          isMuted={isMuted}
+          onToggleFullscreen={onToggleFullscreen}
+          isFullscreen={isFullscreen}
+        />
+
+        {/* Battery Percentage Indicator in Top-Right HUD Area for Mobile Users */}
+        <BatteryIndicator
+          className="absolute"
+          style={{
+            top: 'max(env(safe-area-inset-top, 0px), 4px)',
+            right: 'max(env(safe-area-inset-right, 0px), 6px)',
+          }}
+        />
+      </div>
+
       {/* Portrait Suggestion Notice (Non-blocking, dismissible) */}
       {isPortrait && isTouchDevice && !dismissPortraitNotice && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 border border-cyan-500/50 text-cyan-300 py-1.5 px-3 rounded-lg shadow-xl flex items-center gap-2 backdrop-blur-md max-w-[90vw] text-center">
@@ -301,20 +326,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       {/* Responsive Aspect-Ratio Preserving Game Arena */}
       <div
-        className={`relative w-full h-full flex flex-col items-center ${
-          isPortrait ? 'justify-start pt-12 sm:pt-14' : 'justify-center'
+        className={`relative w-full flex flex-col items-center justify-center ${
+          isPortrait ? 'mt-8 sm:mt-10 mb-28 xs:mb-32' : ''
         }`}
       >
         {/* Arena Frame */}
         <div
           className="relative flex items-center justify-center shadow-2xl transition-all"
           style={{
-            width: isPortrait ? '100%' : 'min(100vw, calc(100dvh * 1.6))',
+            width: isPortrait
+              ? 'min(100vw, calc((100dvh - 200px) * 1.6))'
+              : 'min(100vw, calc(100dvh * 1.6))',
             maxWidth: isPortrait
               ? '100vw'
               : 'min(1280px, calc((100dvh - 8px) * 1.6))',
             maxHeight: isPortrait
-              ? 'min(52dvh, calc(100vw * 0.625))'
+              ? 'min(calc(100dvh - 200px), calc(100vw * 0.625))'
               : 'min(100dvh, calc(100vw * 0.625))',
             aspectRatio: '960 / 600',
           }}
@@ -380,41 +407,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             />
           )}
         </div>
-
-        {/* HUD Container & Overlay - pinned to top */}
-        <div className="pointer-events-none select-none z-20 w-full">
-          <HUD
-            engine={engine}
-            onPause={handlePause}
-            onToggleMute={handleToggleMute}
-            isMuted={isMuted}
-            onToggleFullscreen={onToggleFullscreen}
-            isFullscreen={isFullscreen}
-          />
-
-          {/* Battery Percentage Indicator in Top-Right HUD Area for Mobile Users */}
-          <BatteryIndicator
-            className="absolute"
-            style={{
-              top: 'max(env(safe-area-inset-top, 0px), 4px)',
-              right: 'max(env(safe-area-inset-right, 0px), 6px)',
-            }}
-          />
-        </div>
-
-        {/* Mobile Virtual Controls */}
-        {showTouchControls && (gameState === 'BATTLE' || gameState === 'COUNTDOWN') && (
-          <div
-            className={`pointer-events-none select-none z-30 ${
-              isPortrait
-                ? 'flex-1 w-full relative flex items-end justify-between min-h-[120px]'
-                : 'absolute inset-0 flex items-end justify-between'
-            }`}
-          >
-            <VirtualControls engine={engine} />
-          </div>
-        )}
       </div>
+
+      {/* Mobile Virtual Controls - pinned to bottom */}
+      {showTouchControls && (gameState === 'BATTLE' || gameState === 'COUNTDOWN') && (
+        <div className="absolute inset-0 pointer-events-none select-none z-30 flex items-end justify-between">
+          <VirtualControls engine={engine} />
+        </div>
+      )}
     </div>
   );
 };

@@ -14,6 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.use(express.json());
 const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
@@ -23,7 +24,7 @@ const isProd = process.env.NODE_ENV === 'production';
 
 // In-Memory Room Management
 interface PlayerSession {
-  ws: WebSocket;
+  ws?: WebSocket | null;
   id: string;
   name: string;
   role: 'PLAYER_1' | 'PLAYER_2';
@@ -68,20 +69,20 @@ function generateRoomCode(): string {
   return code;
 }
 
-function sendTo(ws: WebSocket, message: ServerMessage) {
-  if (ws.readyState === WebSocket.OPEN) {
+function sendTo(ws: WebSocket | null | undefined, message: ServerMessage) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
   }
 }
 
-function broadcastToRoom(room: RoomData, message: ServerMessage, excludeWs?: WebSocket) {
+function broadcastToRoom(room: RoomData, message: ServerMessage, excludeWs?: WebSocket | null) {
   const p1 = room.players.PLAYER_1;
   const p2 = room.players.PLAYER_2;
 
-  if (p1 && p1.ws !== excludeWs && p1.ws.readyState === WebSocket.OPEN) {
+  if (p1 && p1.ws && p1.ws !== excludeWs && p1.ws.readyState === WebSocket.OPEN) {
     p1.ws.send(JSON.stringify(message));
   }
-  if (p2 && p2.ws !== excludeWs && p2.ws.readyState === WebSocket.OPEN) {
+  if (p2 && p2.ws && p2.ws !== excludeWs && p2.ws.readyState === WebSocket.OPEN) {
     p2.ws.send(JSON.stringify(message));
   }
 }
@@ -96,7 +97,7 @@ function getRoomStateSync(room: RoomData): RoomStateSync {
             id: room.players.PLAYER_1.id,
             role: 'PLAYER_1',
             name: room.players.PLAYER_1.name,
-            connected: room.players.PLAYER_1.ws.readyState === WebSocket.OPEN,
+            connected: Boolean(room.players.PLAYER_1.ws && room.players.PLAYER_1.ws.readyState === WebSocket.OPEN),
             rematchReady: room.p1Rematch,
           }
         : undefined,
@@ -105,7 +106,7 @@ function getRoomStateSync(room: RoomData): RoomStateSync {
             id: room.players.PLAYER_2.id,
             role: 'PLAYER_2',
             name: room.players.PLAYER_2.name,
-            connected: room.players.PLAYER_2.ws.readyState === WebSocket.OPEN,
+            connected: Boolean(room.players.PLAYER_2.ws && room.players.PLAYER_2.ws.readyState === WebSocket.OPEN),
             rematchReady: room.p2Rematch,
           }
         : undefined,
@@ -214,9 +215,9 @@ function cleanupRoom(roomCode: string) {
 setInterval(() => {
   const now = Date.now();
   for (const [code, r] of rooms.entries()) {
-    const hasP1 = r.players.PLAYER_1 && r.players.PLAYER_1.ws.readyState === WebSocket.OPEN;
-    const hasP2 = r.players.PLAYER_2 && r.players.PLAYER_2.ws.readyState === WebSocket.OPEN;
-    if (!hasP1 && !hasP2) {
+    const hasP1 = Boolean(r.players.PLAYER_1?.ws && r.players.PLAYER_1.ws.readyState === WebSocket.OPEN);
+    const hasP2 = Boolean(r.players.PLAYER_2?.ws && r.players.PLAYER_2.ws.readyState === WebSocket.OPEN);
+    if (!hasP1 && !hasP2 && (now - r.createdAt > 1000 * 60 * 3)) {
       cleanupRoom(code);
     } else if (now - r.lastActivity > 1000 * 60 * 30) {
       cleanupRoom(code);
@@ -225,14 +226,85 @@ setInterval(() => {
 }, 60000);
 
 // WebSocket Connection handling
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, request?: any) => {
   let currentSession: PlayerSession | null = null;
+
+  // Check if client provided roomCode / playerId / role in connection URL query
+  try {
+    if (request && request.url) {
+      const parsedUrl = new URL(request.url, 'http://localhost');
+      const qRoomCode = parsedUrl.searchParams.get('roomCode')?.toUpperCase();
+      const qPlayerId = parsedUrl.searchParams.get('playerId');
+      const qRole = parsedUrl.searchParams.get('role') as 'PLAYER_1' | 'PLAYER_2' | null;
+
+      if (qRoomCode && rooms.has(qRoomCode)) {
+        const room = rooms.get(qRoomCode)!;
+        if (qRole === 'PLAYER_1' && room.players.PLAYER_1) {
+          room.players.PLAYER_1.ws = ws;
+          if (qPlayerId) room.players.PLAYER_1.id = qPlayerId;
+          currentSession = room.players.PLAYER_1;
+          sendTo(ws, {
+            type: 'ROOM_CREATED',
+            roomCode: qRoomCode,
+            playerRole: 'PLAYER_1',
+            playerId: room.players.PLAYER_1.id,
+          });
+          sendTo(ws, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
+        } else if (qRole === 'PLAYER_2' && room.players.PLAYER_2) {
+          room.players.PLAYER_2.ws = ws;
+          if (qPlayerId) room.players.PLAYER_2.id = qPlayerId;
+          currentSession = room.players.PLAYER_2;
+          sendTo(ws, {
+            type: 'ROOM_JOINED',
+            roomCode: qRoomCode,
+            playerRole: 'PLAYER_2',
+            playerId: room.players.PLAYER_2.id,
+          });
+          broadcastToRoom(room, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
+          if (room.players.PLAYER_1?.ws && room.players.PLAYER_2?.ws && room.status === 'LOBBY') {
+            setTimeout(() => startMatchCountdown(room), 1200);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error handling connection query params:', err);
+  }
 
   ws.on('message', (data: string) => {
     try {
       const msg: ClientMessage = JSON.parse(data.toString());
 
-      if (msg.type === 'CREATE_ROOM') {
+      if (msg.type === 'ATTACH_ROOM') {
+        const cleanCode = (msg.roomCode || '').trim().toUpperCase();
+        const room = rooms.get(cleanCode);
+        if (room) {
+          if (msg.role === 'PLAYER_1' && room.players.PLAYER_1) {
+            room.players.PLAYER_1.ws = ws;
+            currentSession = room.players.PLAYER_1;
+            sendTo(ws, {
+              type: 'ROOM_CREATED',
+              roomCode: cleanCode,
+              playerRole: 'PLAYER_1',
+              playerId: room.players.PLAYER_1.id,
+            });
+            sendTo(ws, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
+          } else if (msg.role === 'PLAYER_2' && room.players.PLAYER_2) {
+            room.players.PLAYER_2.ws = ws;
+            currentSession = room.players.PLAYER_2;
+            sendTo(ws, {
+              type: 'ROOM_JOINED',
+              roomCode: cleanCode,
+              playerRole: 'PLAYER_2',
+              playerId: room.players.PLAYER_2.id,
+            });
+            broadcastToRoom(room, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
+            if (room.players.PLAYER_1?.ws && room.players.PLAYER_2?.ws && room.status === 'LOBBY') {
+              setTimeout(() => startMatchCountdown(room), 1200);
+            }
+          }
+        }
+      } else if (msg.type === 'CREATE_ROOM') {
         const roomCode = generateRoomCode();
         const playerId = 'p1_' + Math.random().toString(36).substring(2, 9);
         const name = (msg.playerName || 'Player 1').trim().substring(0, 16);
@@ -284,7 +356,7 @@ wss.on('connection', (ws: WebSocket) => {
           return;
         }
 
-        if (room.players.PLAYER_2 && room.players.PLAYER_2.ws.readyState === WebSocket.OPEN) {
+        if (room.players.PLAYER_2 && room.players.PLAYER_2.ws && room.players.PLAYER_2.ws.readyState === WebSocket.OPEN) {
           sendTo(ws, { type: 'ERROR', message: 'Room is full. 2 players are already in this room.' });
           return;
         }
@@ -523,6 +595,144 @@ server.on('upgrade', (request, socket, head) => {
       wss.emit('connection', ws, request);
     });
   }
+});
+
+// --- REST API Endpoints for Guaranteed Device-Independent Room Management ---
+
+// 1. Create Room (Returns unique 5-char code & registers P1)
+app.post('/api/multiplayer/room/create', (req, res) => {
+  try {
+    const rawName = req.body?.playerName;
+    const playerName = (typeof rawName === 'string' && rawName.trim() ? rawName.trim() : 'Player 1').substring(0, 16);
+    const roomCode = generateRoomCode();
+    const playerId = 'p1_' + Math.random().toString(36).substring(2, 9);
+
+    const session: PlayerSession = {
+      ws: null,
+      id: playerId,
+      name: playerName,
+      role: 'PLAYER_1',
+      roomCode,
+      lastPing: Date.now(),
+    };
+
+    const newRoom: RoomData = {
+      code: roomCode,
+      status: 'LOBBY',
+      players: { PLAYER_1: session },
+      currentRound: 1,
+      p1RoundsWon: 0,
+      p2RoundsWon: 0,
+      p1Hp: 100,
+      p2Hp: 100,
+      p1Rematch: false,
+      p2Rematch: false,
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+    };
+
+    rooms.set(roomCode, newRoom);
+
+    res.json({
+      success: true,
+      roomCode,
+      playerRole: 'PLAYER_1',
+      playerId,
+      room: getRoomStateSync(newRoom),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err?.message || 'Failed to create room' });
+  }
+});
+
+// 2. Join Room (Validates code, checks capacity, registers P2)
+app.post('/api/multiplayer/room/join', (req, res) => {
+  try {
+    const code = (req.body?.roomCode || '').trim().toUpperCase();
+    const rawName = req.body?.playerName;
+    const playerName = (typeof rawName === 'string' && rawName.trim() ? rawName.trim() : 'Player 2').substring(0, 16);
+
+    if (!code) {
+      return res.status(400).json({ success: false, message: 'Room code is required.' });
+    }
+
+    const room = rooms.get(code);
+    if (!room) {
+      return res.status(404).json({ success: false, message: 'Room not found. Check the code and try again.' });
+    }
+
+    const p2IsActive = Boolean(
+      room.players.PLAYER_2 && (
+        (room.players.PLAYER_2.ws && room.players.PLAYER_2.ws.readyState === WebSocket.OPEN) ||
+        (Date.now() - (room.players.PLAYER_2.lastPing || 0) < 30000)
+      )
+    );
+
+    if (p2IsActive) {
+      return res.status(400).json({ success: false, message: 'Room is full. 2 players are already in this room.' });
+    }
+
+    const playerId = 'p2_' + Math.random().toString(36).substring(2, 9);
+    const session: PlayerSession = {
+      ws: null,
+      id: playerId,
+      name: playerName,
+      role: 'PLAYER_2',
+      roomCode: code,
+      lastPing: Date.now(),
+    };
+
+    room.players.PLAYER_2 = session;
+    room.lastActivity = Date.now();
+
+    // Broadcast updated state if P1 is connected
+    broadcastToRoom(room, {
+      type: 'ROOM_STATE',
+      room: getRoomStateSync(room),
+    });
+
+    res.json({
+      success: true,
+      roomCode: code,
+      playerRole: 'PLAYER_2',
+      playerId,
+      room: getRoomStateSync(room),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err?.message || 'Failed to join room' });
+  }
+});
+
+// 3. Room Status
+app.get('/api/multiplayer/room/:code', (req, res) => {
+  const code = (req.params.code || '').trim().toUpperCase();
+  const room = rooms.get(code);
+  if (!room) {
+    return res.status(404).json({ success: false, message: 'Room not found.' });
+  }
+  res.json({ success: true, room: getRoomStateSync(room) });
+});
+
+// 4. Leave Room
+app.post('/api/multiplayer/room/leave', (req, res) => {
+  const code = (req.body?.roomCode || '').trim().toUpperCase();
+  const playerId = req.body?.playerId;
+  const room = rooms.get(code);
+  if (room && playerId) {
+    if (room.players.PLAYER_1?.id === playerId) {
+      delete room.players.PLAYER_1;
+    } else if (room.players.PLAYER_2?.id === playerId) {
+      delete room.players.PLAYER_2;
+    }
+    broadcastToRoom(room, {
+      type: 'ROOM_STATE',
+      room: getRoomStateSync(room),
+    });
+    if (!room.players.PLAYER_1 && !room.players.PLAYER_2) {
+      cleanupRoom(code);
+    }
+  }
+  res.json({ success: true });
 });
 
 // Health check endpoint
