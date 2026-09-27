@@ -139,8 +139,22 @@ export class MultiplayerClient {
     return this.roomCode;
   }
 
+  private roomState: RoomStateSync | null = null;
+
+  public getRoomState(): RoomStateSync | null {
+    return this.roomState;
+  }
+
   public getPlayerId(): string | null {
-    return this.playerId;
+    if (this.playerId) return this.playerId;
+    if (this.role && this.roomState?.players) {
+      const sess = this.roomState.players[this.role];
+      if (sess?.id) {
+        this.playerId = sess.id;
+        return sess.id;
+      }
+    }
+    return null;
   }
 
   public getLastDiagnostic(): ConnectionDiagnostic | null {
@@ -559,6 +573,9 @@ export class MultiplayerClient {
             this.roomCode = data.roomCode;
             this.role = 'PLAYER_1';
             this.playerId = data.playerId;
+            if (data.room) {
+              this.roomState = data.room;
+            }
 
             if (this.callbacks.onRoomCreated) {
               this.callbacks.onRoomCreated(data.roomCode, 'PLAYER_1');
@@ -689,6 +706,9 @@ export class MultiplayerClient {
           this.roomCode = cleanCode;
           this.role = 'PLAYER_2';
           this.playerId = data.playerId;
+          if (data.room) {
+            this.roomState = data.room;
+          }
 
           if (this.callbacks.onRoomJoined) {
             this.callbacks.onRoomJoined(cleanCode, 'PLAYER_2');
@@ -783,6 +803,7 @@ export class MultiplayerClient {
     this.cleanupSocket();
     this.role = null;
     this.playerId = null;
+    this.roomState = null;
     this.roomCode = null;
     this.pendingMessages = [];
     this.connectPromise = null;
@@ -909,6 +930,13 @@ export class MultiplayerClient {
         break;
 
       case 'ROOM_STATE':
+        this.roomState = msg.room;
+        if (!this.playerId && this.role && msg.room?.players) {
+          const sess = msg.room.players[this.role];
+          if (sess?.id) {
+            this.playerId = sess.id;
+          }
+        }
         if (this.callbacks.onRoomState) {
           this.callbacks.onRoomState(msg.room);
         }

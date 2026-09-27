@@ -32,11 +32,8 @@ export const VirtualControls: React.FC<VirtualControlsProps> = ({ engine }) => {
     let lastThrottleTime = 0;
 
     const pollCooldowns = (now: number) => {
-      // Local mech detection (handles both VEX as P1 and NOVA as P2 in multiplayer)
-      const mech =
-        engine.isMultiplayer && engine.localRole === 'PLAYER_2'
-          ? engine.nova
-          : engine.vex;
+      // Local mech detection
+      const mech = engine.getLocalPlayer();
 
       if (mech) {
         const d = Math.max(0, mech.dashCooldown);

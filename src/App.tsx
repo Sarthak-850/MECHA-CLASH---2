@@ -195,13 +195,16 @@ export default function App() {
       role: 'PLAYER_1' | 'PLAYER_2',
       localName: string,
       remoteName: string,
-      roomCode: string
+      roomCode: string,
+      localPlayerId?: string,
+      p1Id?: string,
+      p2Id?: string
     ) => {
       ensureMobileFullscreen();
       setOpponentDisconnected(false);
       setRematchRequested(false);
       setOpponentRematchReady(false);
-      engine.startMultiplayerMatch(role, localName, remoteName, roomCode);
+      engine.startMultiplayerMatch(role, localName, remoteName, roomCode, localPlayerId, p1Id, p2Id);
       setCurrentScreen('PLAYING');
     },
     [engine, ensureMobileFullscreen]

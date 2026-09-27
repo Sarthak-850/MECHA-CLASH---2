@@ -116,6 +116,7 @@ export type AIBehaviorState =
 export interface MechState {
   id: 'VEX' | 'NOVA';
   name: string;
+  playerId?: string; // Authoritative player/session ID for ownership
   x: number;
   y: number;
   vx: number;

@@ -172,11 +172,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       engine.keys[e.code] = true;
 
       if (e.code === 'KeyP') {
-        if (engine.gameState === 'BATTLE') {
-          engine.pause();
-        } else if (engine.gameState === 'PAUSED') {
-          lastTimeRef.current = performance.now();
-          engine.resume();
+        if (!engine.isMultiplayer) {
+          if (engine.gameState === 'BATTLE') {
+            engine.pause();
+          } else if (engine.gameState === 'PAUSED') {
+            lastTimeRef.current = performance.now();
+            engine.resume();
+          }
         }
       }
 
@@ -192,7 +194,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const handleBlur = () => {
       engine.keys = {};
       engine.setJoystickVector(0, 0);
-      if (engine.gameState === 'BATTLE') {
+      if (!engine.isMultiplayer && engine.gameState === 'BATTLE') {
         engine.pause();
       }
     };

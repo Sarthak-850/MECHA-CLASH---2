@@ -18,6 +18,7 @@ import {
 } from '../types/game';
 import { MechAI } from './ai';
 import { RemotePlayerInterpolator } from './interpolator';
+import { multiplayerClient } from '../network/multiplayerClient';
 import {
   AI_DIFFICULTIES,
   ARENA_HEIGHT,
@@ -116,6 +117,8 @@ export class GameEngine {
   // Multiplayer State
   public isMultiplayer: boolean = false;
   public localRole: 'PLAYER_1' | 'PLAYER_2' = 'PLAYER_1';
+  public localPlayerId: string = 'local_p1';
+  public remotePlayerId: string = 'remote_p2';
   public localPlayerName: string = 'VEX';
   public remotePlayerName: string = 'NOVA';
   public multiplayerRoomCode: string = '';
@@ -134,12 +137,63 @@ export class GameEngine {
   public onSendCollectPowerUp?: (powerUpId: string, role: 'PLAYER_1' | 'PLAYER_2') => void;
 
   /**
+   * Returns all players in the arena.
+   */
+  public getPlayers(): MechState[] {
+    return [this.vex, this.nova];
+  }
+
+  /**
+   * Returns the local player's mecha based strictly on localPlayerId.
+   * On any client device, localPlayerId corresponds to this client's connected player.
+   */
+  public getLocalPlayer(): MechState {
+    if (this.isMultiplayer) {
+      const players = this.getPlayers();
+      const local = players.find(
+        (p) => (p.playerId && p.playerId === this.localPlayerId) || (p as any).id === this.localPlayerId
+      );
+      if (local) return local;
+
+      return this.localRole === 'PLAYER_2' ? this.nova : this.vex;
+    }
+    return this.vex;
+  }
+
+  /**
+   * Returns the remote opponent's mecha.
+   */
+  public getRemotePlayer(): MechState {
+    if (this.isMultiplayer) {
+      const local = this.getLocalPlayer();
+      return local === this.vex ? this.nova : this.vex;
+    }
+    return this.nova;
+  }
+
+  /**
+   * Determines if a given mech or entity belongs to the local player.
+   */
+  public isLocalPlayer(mech: MechState | string): boolean {
+    const local = this.getLocalPlayer();
+    if (typeof mech === 'string') {
+      return (
+        mech === this.localPlayerId ||
+        mech === local.id ||
+        Boolean(local.playerId && mech === local.playerId)
+      );
+    }
+    return (
+      Boolean(mech.playerId && mech.playerId === this.localPlayerId) ||
+      mech === local
+    );
+  }
+
+  /**
    * Identifies which mech entity the local player is controlling.
-   * Player 1 controls VEX. Player 2 controls NOVA.
    */
   public getLocalMechId(): 'VEX' | 'NOVA' {
-    if (!this.isMultiplayer) return 'VEX';
-    return this.localRole === 'PLAYER_1' ? 'VEX' : 'NOVA';
+    return this.getLocalPlayer().id;
   }
 
   /**
@@ -147,8 +201,7 @@ export class GameEngine {
    * Used for local-relative rendering (Local = Blue, Remote = Red).
    */
   public isLocalMech(mech: MechState | 'VEX' | 'NOVA'): boolean {
-    const id = typeof mech === 'string' ? mech : mech.id;
-    return id === this.getLocalMechId();
+    return this.isLocalPlayer(mech);
   }
 
   /**
@@ -156,7 +209,7 @@ export class GameEngine {
    */
   public isLocalWinner(winner: 'VEX' | 'NOVA' | null): boolean {
     if (!winner) return false;
-    return this.isLocalMech(winner);
+    return this.getLocalPlayer().id === winner;
   }
 
   // Callback to inform React UI of state changes
@@ -198,6 +251,7 @@ export class GameEngine {
   ): MechState {
     return {
       id,
+      playerId: id === 'VEX' ? 'local_p1' : 'ai_p2',
       name: id,
       x,
       y,
@@ -237,6 +291,10 @@ export class GameEngine {
 
   public startMatch(mode: GameMode, diff: DifficultyLevel = 'NORMAL', level: number = 1) {
     this.isMultiplayer = false;
+    this.localPlayerId = 'local_p1';
+    this.remotePlayerId = 'ai_p2';
+    this.vex.playerId = 'local_p1';
+    this.nova.playerId = 'ai_p2';
     this.gameMode = mode;
     this.difficulty = diff;
     this.currentLevel = level;
@@ -294,14 +352,18 @@ export class GameEngine {
     role: 'PLAYER_1' | 'PLAYER_2',
     localName: string,
     remoteName: string,
-    roomCode: string
+    roomCode: string,
+    localPlayerId: string = '',
+    p1Id?: string,
+    p2Id?: string
   ) {
     this.isMultiplayer = true;
     this.localRole = role;
+    this.localPlayerId = localPlayerId || (role === 'PLAYER_1' ? 'p1_local' : 'p2_local');
     this.localPlayerName = localName;
     this.remotePlayerName = remoteName;
     this.multiplayerRoomCode = roomCode;
-    this.gameMode = 'QUICK_DUEL';
+    this.gameMode = 'MULTIPLAYER';
     this.difficulty = 'NORMAL';
     this.currentLevel = 1;
     this.currentRound = 1;
@@ -310,6 +372,29 @@ export class GameEngine {
     this.pendingPowerUpCollects.clear();
     this.interpolator.reset();
     this.lastSentState = null;
+
+    // Resolve authoritative player IDs without swapping server identities
+    const currentRoom = multiplayerClient.getRoomState();
+    const resolvedLocalId =
+      localPlayerId ||
+      multiplayerClient.getPlayerId() ||
+      (role === 'PLAYER_1'
+        ? (p1Id || currentRoom?.players.PLAYER_1?.id || 'p1_local')
+        : (p2Id || currentRoom?.players.PLAYER_2?.id || 'p2_local'));
+    this.localPlayerId = resolvedLocalId;
+
+    const resolvedP1Id =
+      p1Id ||
+      currentRoom?.players.PLAYER_1?.id ||
+      (role === 'PLAYER_1' ? resolvedLocalId : 'p1_remote');
+    const resolvedP2Id =
+      p2Id ||
+      currentRoom?.players.PLAYER_2?.id ||
+      (role === 'PLAYER_2' ? resolvedLocalId : 'p2_remote');
+
+    this.vex.playerId = resolvedP1Id;
+    this.nova.playerId = resolvedP2Id;
+    this.remotePlayerId = role === 'PLAYER_1' ? resolvedP2Id : resolvedP1Id;
 
     this.nova.isBoss = false;
     this.nova.bossTier = undefined;
@@ -331,7 +416,9 @@ export class GameEngine {
     };
 
     this.setupArenaHazards();
-    this.startCountdown();
+    // Lobby countdown is authoritative; enter BATTLE immediately
+    this.gameState = 'BATTLE';
+    if (this.onStateChange) this.onStateChange(this.gameState);
   }
 
   public applyRemotePlayerState(role: 'PLAYER_1' | 'PLAYER_2', state: any) {
@@ -339,13 +426,13 @@ export class GameEngine {
     const remoteRole = this.localRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
     if (role !== remoteRole) return;
 
-    const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
+    const remoteMech = this.getRemotePlayer();
     this.interpolator.pushSnapshot(state, remoteMech);
   }
 
   public applyRemoteAttack(attack: any) {
     if (!this.isMultiplayer) return;
-    const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
+    const remoteMech = this.getRemotePlayer();
     remoteMech.isAttacking = true;
     remoteMech.hasHitThisSwing = false;
     remoteMech.attackTimer = ATTACK_DURATION;
@@ -356,7 +443,7 @@ export class GameEngine {
 
   public applyRemoteDash(role: 'PLAYER_1' | 'PLAYER_2', dx: number, dy: number) {
     if (!this.isMultiplayer) return;
-    const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
+    const remoteMech = this.getRemotePlayer();
     remoteMech.isDashing = true;
     remoteMech.dashTimer = DASH_DURATION;
     remoteMech.dashCooldown = DASH_COOLDOWN;
@@ -367,7 +454,7 @@ export class GameEngine {
     soundManager.playDash();
     this.triggerScreenShake(3);
 
-    const color = remoteMech.id === 'VEX' ? '#38bdf8' : '#ef4444';
+    const color = '#ef4444';
     for (let i = 0; i < 10; i++) {
       this.particles.push({
         x: remoteMech.x - remoteMech.dashDirX * 16,
@@ -385,7 +472,7 @@ export class GameEngine {
 
   public applyRemoteUltimate(_role: 'PLAYER_1' | 'PLAYER_2', x: number, y: number) {
     if (!this.isMultiplayer) return;
-    const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
+    const remoteMech = this.getRemotePlayer();
     remoteMech.ultimateCooldown = remoteMech.maxUltimateCooldown;
     soundManager.playAttack(true);
     this.triggerScreenShake(7);
@@ -997,7 +1084,7 @@ export class GameEngine {
 
     if (this.isMultiplayer) {
       // In multiplayer: Local player controls their assigned mech
-      const localMech = this.localRole === 'PLAYER_1' ? this.vex : this.nova;
+      const localMech = this.getLocalPlayer();
       this.processPlayerInputForMech(localMech, dt);
 
       // Periodically sync local mech state to opponent via WebSocket (~20-25Hz / 40-50ms)
@@ -1177,9 +1264,7 @@ export class GameEngine {
     soundManager.playAttack(mech.hasPowerAttack);
 
     if (this.isMultiplayer && this.onSendPlayerAttack) {
-      const isLocalMech = (this.localRole === 'PLAYER_1' && mech.id === 'VEX') ||
-                          (this.localRole === 'PLAYER_2' && mech.id === 'NOVA');
-      if (isLocalMech) {
+      if (this.isLocalPlayer(mech)) {
         this.onSendPlayerAttack({
           id: 'atk_' + Date.now(),
           attackerId: this.localRole,
@@ -1231,9 +1316,7 @@ export class GameEngine {
     }
 
     if (this.isMultiplayer && this.onSendPlayerDash) {
-      const isLocalMech = (this.localRole === 'PLAYER_1' && mech.id === 'VEX') ||
-                          (this.localRole === 'PLAYER_2' && mech.id === 'NOVA');
-      if (isLocalMech) {
+      if (this.isLocalPlayer(mech)) {
         this.onSendPlayerDash(inputDx, inputDy);
       }
     }
@@ -1271,9 +1354,7 @@ export class GameEngine {
     this.addFloatingText('ENERGY BURST!', mech.x, mech.y - 32, color, 1.3);
 
     if (this.isMultiplayer && this.onSendPlayerUltimate) {
-      const isLocalMech = (this.localRole === 'PLAYER_1' && mech.id === 'VEX') ||
-                          (this.localRole === 'PLAYER_2' && mech.id === 'NOVA');
-      if (isLocalMech) {
+      if (this.isLocalPlayer(mech)) {
         this.onSendPlayerUltimate(mech.x, mech.y);
       }
     }
@@ -1282,10 +1363,7 @@ export class GameEngine {
     if (dist <= burstRadius + opponent.radius && opponent.invulnerableTimer <= 0) {
       const dmg = 24;
       if (this.isMultiplayer) {
-        const isLocal =
-          (this.localRole === 'PLAYER_1' && mech.id === 'VEX') ||
-          (this.localRole === 'PLAYER_2' && mech.id === 'NOVA');
-        if (isLocal && this.onSendDamage) {
+        if (this.isLocalPlayer(mech) && this.onSendDamage) {
           const targetRole = this.localRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
           const newHp = Math.max(0, opponent.hp - dmg);
           this.onSendDamage(targetRole, dmg, true, 'BURST', newHp);
@@ -1349,9 +1427,7 @@ export class GameEngine {
 
     // Apply movement
     if (this.isMultiplayer) {
-      const isRemote =
-        (this.localRole === 'PLAYER_1' && mech.id === 'NOVA') ||
-        (this.localRole === 'PLAYER_2' && mech.id === 'VEX');
+      const isRemote = !this.isLocalPlayer(mech);
 
       if (isRemote) {
         // High-performance snapshot interpolation & boundary containment
@@ -1524,7 +1600,7 @@ export class GameEngine {
     if (this.isMultiplayer) {
       // In multiplayer, the server manages spawn intervals
       // Local client checks collision and sends collect event
-      const localMech = this.localRole === 'PLAYER_1' ? this.vex : this.nova;
+      const localMech = this.getLocalPlayer();
       for (const p of this.powerUps) {
         if (this.pendingPowerUpCollects.has(p.id)) continue;
         if (Math.hypot(localMech.x - p.x, localMech.y - p.y) < localMech.radius + p.radius) {
@@ -1652,14 +1728,10 @@ export class GameEngine {
 
   private checkAttacks() {
     if (this.isMultiplayer) {
-      if (this.localRole === 'PLAYER_1') {
-        if (this.vex.isAttacking && !this.vex.hasHitThisSwing && this.vex.attackTimer > 0.04) {
-          this.evaluateHit(this.vex, this.nova);
-        }
-      } else {
-        if (this.nova.isAttacking && !this.nova.hasHitThisSwing && this.nova.attackTimer > 0.04) {
-          this.evaluateHit(this.nova, this.vex);
-        }
+      const local = this.getLocalPlayer();
+      const remote = this.getRemotePlayer();
+      if (local.isAttacking && !local.hasHitThisSwing && local.attackTimer > 0.04) {
+        this.evaluateHit(local, remote);
       }
       return;
     }
@@ -1926,6 +1998,7 @@ export class GameEngine {
   }
 
   public pause() {
+    if (this.isMultiplayer) return;
     if (this.gameState === 'BATTLE') {
       this.gameState = 'PAUSED';
       if (this.onStateChange) this.onStateChange(this.gameState);

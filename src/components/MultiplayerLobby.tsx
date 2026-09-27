@@ -21,7 +21,10 @@ interface MultiplayerLobbyProps {
     role: 'PLAYER_1' | 'PLAYER_2',
     localName: string,
     remoteName: string,
-    roomCode: string
+    roomCode: string,
+    localPlayerId?: string,
+    p1Id?: string,
+    p2Id?: string
   ) => void;
 }
 
@@ -118,6 +121,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         setErrorMsg(null);
       },
       onRoomState: (room) => {
+        roomStateRef.current = room;
         setRoomState(room);
         if (room.status === 'STARTING') {
           setCountdownMsg('OPPONENT CONNECTED! LAUNCHING DUEL...');
@@ -135,13 +139,18 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         const code = multiplayerClient.getRoomCode();
         if (!role || !code) return;
 
-        const current = roomStateRef.current;
-        const p1Name = current?.players.PLAYER_1?.name || 'Player 1';
-        const p2Name = current?.players.PLAYER_2?.name || 'Player 2';
+        const current = roomStateRef.current || multiplayerClient.getRoomState();
+        const p1 = current?.players.PLAYER_1;
+        const p2 = current?.players.PLAYER_2;
+        const p1Id = p1?.id;
+        const p2Id = p2?.id;
+        const p1Name = p1?.name || 'Player 1';
+        const p2Name = p2?.name || 'Player 2';
         const localName = role === 'PLAYER_1' ? p1Name : p2Name;
         const remoteName = role === 'PLAYER_1' ? p2Name : p1Name;
+        const localPlayerId = multiplayerClient.getPlayerId() || (role === 'PLAYER_1' ? p1Id : p2Id);
 
-        onMatchStarting(role, localName, remoteName, code);
+        onMatchStarting(role, localName, remoteName, code, localPlayerId, p1Id, p2Id);
       },
       onError: (msg) => {
         if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);

@@ -646,9 +646,8 @@ export const BattleHUD: React.FC<BattleHUDProps> = ({
 }) => {
   // Local-relative perspective: Player on this device is ALWAYS localMech (Blue left visor)
   // Opponent on other device / AI is ALWAYS remoteMech (Red right visor)
-  const isP2Local = engine.isMultiplayer && engine.localRole === 'PLAYER_2';
-  const localMech = isP2Local ? engine.nova : engine.vex;
-  const remoteMech = isP2Local ? engine.vex : engine.nova;
+  const localMech = engine.getLocalPlayer();
+  const remoteMech = engine.getRemotePlayer();
 
   // Dash Status tracks the local player's mech cooldown
   const dashReady = localMech.dashCooldown <= 0;

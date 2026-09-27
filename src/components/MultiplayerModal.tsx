@@ -30,9 +30,9 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
     onRematch();
   };
 
-  const isHost = engine.localRole === 'PLAYER_1';
-  const myRoundsWon = isHost ? engine.vexRoundsWon : engine.novaRoundsWon;
-  const oppRoundsWon = isHost ? engine.novaRoundsWon : engine.vexRoundsWon;
+  const isLocalVex = engine.isLocalPlayer(engine.vex);
+  const myRoundsWon = isLocalVex ? engine.vexRoundsWon : engine.novaRoundsWon;
+  const oppRoundsWon = isLocalVex ? engine.novaRoundsWon : engine.vexRoundsWon;
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-2.5 sm:p-4 select-none">
@@ -98,7 +98,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
                   {engine.localPlayerName} (YOU)
                 </span>
                 <span className="text-[9px] font-mono-data text-slate-400">
-                  {isHost ? 'VEX' : 'NOVA'}
+                  {isLocalVex ? 'VEX' : 'NOVA'}
                 </span>
                 <span className="font-display font-black text-2xl sm:text-4xl text-white mt-0.5">
                   {myRoundsWon}
@@ -113,7 +113,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
                   {engine.remotePlayerName}
                 </span>
                 <span className="text-[9px] font-mono-data text-slate-400">
-                  {isHost ? 'NOVA' : 'VEX'}
+                  {isLocalVex ? 'NOVA' : 'VEX'}
                 </span>
                 <span className="font-display font-black text-2xl sm:text-4xl text-white mt-0.5">
                   {oppRoundsWon}
