@@ -8,39 +8,67 @@ interface VirtualControlsProps {
 
 export const VirtualControls: React.FC<VirtualControlsProps> = ({ engine }) => {
   // Joystick State
-  const [knobPos, setKnobPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isJoystickActive, setIsJoystickActive] = useState(false);
   const joystickPointerId = useRef<number | null>(null);
   const joystickCenter = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const joystickMaxRadiusRef = useRef<number>(36);
   const joystickBaseRef = useRef<HTMLDivElement | null>(null);
+  const joystickKnobRef = useRef<HTMLDivElement | null>(null);
 
   // Button States for visual press feedback
   const [isAttackPressed, setIsAttackPressed] = useState(false);
   const [isDashPressed, setIsDashPressed] = useState(false);
   const [isUltimatePressed, setIsUltimatePressed] = useState(false);
 
-  // Cooldown values polled on animation frame or synced with VEX
+  // Cooldown values polled and throttled to prevent 60-120fps React state floods
   const [dashCooldown, setDashCooldown] = useState(0);
   const [attackCooldown, setAttackCooldown] = useState(0);
   const [ultimateCooldown, setUltimateCooldown] = useState(0);
+  const cooldownsRef = useRef({ dash: 0, attack: 0, ultimate: 0 });
 
-  // Sync cooldowns with engine state for HUD/buttons
+  // Sync cooldowns with engine state for HUD/buttons with throttling
   useEffect(() => {
     let animId: number;
-    const pollCooldowns = () => {
-      if (engine.vex) {
-        setDashCooldown(Math.max(0, engine.vex.dashCooldown));
-        setAttackCooldown(Math.max(0, engine.vex.attackCooldown));
-        setUltimateCooldown(Math.max(0, engine.vex.ultimateCooldown || 0));
+    let lastThrottleTime = 0;
+
+    const pollCooldowns = (now: number) => {
+      // Local mech detection (handles both VEX as P1 and NOVA as P2 in multiplayer)
+      const mech =
+        engine.isMultiplayer && engine.localRole === 'PLAYER_2'
+          ? engine.nova
+          : engine.vex;
+
+      if (mech) {
+        const d = Math.max(0, mech.dashCooldown);
+        const a = Math.max(0, mech.attackCooldown);
+        const u = Math.max(0, mech.ultimateCooldown || 0);
+
+        const prev = cooldownsRef.current;
+        // Trigger React re-render only when ready status changes or every 200ms for timers
+        const statusChanged =
+          (d <= 0 && prev.dash > 0) ||
+          (d > 0 && prev.dash <= 0) ||
+          (a <= 0 && prev.attack > 0) ||
+          (a > 0 && prev.attack <= 0) ||
+          (u <= 0 && prev.ultimate > 0) ||
+          (u > 0 && prev.ultimate <= 0);
+
+        if (statusChanged || now - lastThrottleTime > 200) {
+          lastThrottleTime = now;
+          cooldownsRef.current = { dash: d, attack: a, ultimate: u };
+          setDashCooldown(d);
+          setAttackCooldown(a);
+          setUltimateCooldown(u);
+        }
       }
       animId = requestAnimationFrame(pollCooldowns);
     };
+
     animId = requestAnimationFrame(pollCooldowns);
     return () => cancelAnimationFrame(animId);
   }, [engine]);
 
-  // --- JOYSTICK POINTER HANDLERS ---
+  // --- JOYSTICK POINTER HANDLERS (Direct DOM transform for 0 React re-renders on move) ---
   const handleJoystickPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
@@ -74,7 +102,9 @@ export const VirtualControls: React.FC<VirtualControlsProps> = ({ engine }) => {
       const kx = Math.cos(angle) * clampedDist;
       const ky = Math.sin(angle) * clampedDist;
 
-      setKnobPos({ x: kx, y: ky });
+      if (joystickKnobRef.current) {
+        joystickKnobRef.current.style.transform = `translate(${kx}px, ${ky}px)`;
+      }
       setIsJoystickActive(true);
 
       // Normalized vector between -1 and 1
@@ -101,7 +131,9 @@ export const VirtualControls: React.FC<VirtualControlsProps> = ({ engine }) => {
       const kx = Math.cos(angle) * clampedDist;
       const ky = Math.sin(angle) * clampedDist;
 
-      setKnobPos({ x: kx, y: ky });
+      if (joystickKnobRef.current) {
+        joystickKnobRef.current.style.transform = `translate(${kx}px, ${ky}px)`;
+      }
 
       // Normalized vector
       const normX = kx / maxRadius;
@@ -124,7 +156,9 @@ export const VirtualControls: React.FC<VirtualControlsProps> = ({ engine }) => {
       }
 
       joystickPointerId.current = null;
-      setKnobPos({ x: 0, y: 0 });
+      if (joystickKnobRef.current) {
+        joystickKnobRef.current.style.transform = 'translate(0px, 0px)';
+      }
       setIsJoystickActive(false);
       engine.setJoystickVector(0, 0);
     },
@@ -233,8 +267,9 @@ export const VirtualControls: React.FC<VirtualControlsProps> = ({ engine }) => {
           {/* Concentric guide ring */}
           <div className="w-1/2 h-1/2 rounded-full border border-slate-700/40 pointer-events-none" />
 
-          {/* Interactive Joystick Knob */}
+          {/* Interactive Joystick Knob (Hardware-accelerated direct DOM transform) */}
           <div
+            ref={joystickKnobRef}
             className={`absolute rounded-full flex items-center justify-center border-2 pointer-events-none shadow-md ${
               isJoystickActive
                 ? 'bg-gradient-to-br from-cyan-400 to-cyan-600 border-white text-slate-950 shadow-[0_0_12px_rgba(6,182,212,0.8)] scale-105'
@@ -243,7 +278,7 @@ export const VirtualControls: React.FC<VirtualControlsProps> = ({ engine }) => {
             style={{
               width: 'clamp(36px, 8.5vw, 48px)',
               height: 'clamp(36px, 8.5vw, 48px)',
-              transform: `translate(${knobPos.x}px, ${knobPos.y}px)`,
+              transform: 'translate(0px, 0px)',
               transition: isJoystickActive ? 'none' : 'transform 0.16s cubic-bezier(0.18, 0.89, 0.32, 1.28)',
             }}
           >

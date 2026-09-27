@@ -17,6 +17,7 @@ import {
   PowerUpType,
 } from '../types/game';
 import { MechAI } from './ai';
+import { RemotePlayerInterpolator } from './interpolator';
 import {
   AI_DIFFICULTIES,
   ARENA_HEIGHT,
@@ -120,15 +121,8 @@ export class GameEngine {
   public multiplayerRoomCode: string = '';
   private netSyncTimer: number = 0;
   private netSeq: number = 0;
-  private remoteTarget: {
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    angle: number;
-    walkCycle: number;
-    isDashing: boolean;
-  } | null = null;
+  public interpolator: RemotePlayerInterpolator = new RemotePlayerInterpolator();
+  private lastSentState: { x: number; y: number; vx: number; vy: number; angle: number; isDashing: boolean } | null = null;
   private pendingPowerUpCollects = new Set<string>();
 
   // Multiplayer Event Callbacks
@@ -288,7 +282,8 @@ export class GameEngine {
     this.vexRoundsWon = 0;
     this.novaRoundsWon = 0;
     this.pendingPowerUpCollects.clear();
-    this.remoteTarget = null;
+    this.interpolator.reset();
+    this.lastSentState = null;
 
     this.nova.isBoss = false;
     this.nova.bossTier = undefined;
@@ -318,15 +313,8 @@ export class GameEngine {
     const remoteRole = this.localRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
     if (role !== remoteRole) return;
 
-    this.remoteTarget = {
-      x: state.x,
-      y: state.y,
-      vx: state.vx,
-      vy: state.vy,
-      angle: state.angle,
-      walkCycle: state.walkCycle,
-      isDashing: state.isDashing,
-    };
+    const remoteMech = this.localRole === 'PLAYER_1' ? this.nova : this.vex;
+    this.interpolator.pushSnapshot(state, remoteMech);
   }
 
   public applyRemoteAttack(attack: any) {
@@ -898,6 +886,8 @@ export class GameEngine {
     this.metrics.aiState = this.nova.aiBehaviorState;
     this.metrics.aiPersonality = this.nova.aiPersonality;
     this.metrics.isMultiplayer = this.isMultiplayer;
+    this.metrics.interpolationBufferCount = this.interpolator.getBufferSize();
+    this.metrics.jitterMs = this.interpolator.getJitterMs();
 
     // Update particles & floating texts
     this.updateParticles(dt);
@@ -982,13 +972,22 @@ export class GameEngine {
       const localMech = this.localRole === 'PLAYER_1' ? this.vex : this.nova;
       this.processPlayerInputForMech(localMech, dt);
 
-      // Periodically sync local mech state to opponent via WebSocket (~20Hz / 50ms)
+      // Periodically sync local mech state to opponent via WebSocket (~20-25Hz / 40-50ms)
       this.netSyncTimer += dt;
-      if (this.netSyncTimer >= 0.05) {
+      const isMovingOrActive =
+        Math.hypot(localMech.vx, localMech.vy) > 1 ||
+        localMech.isDashing ||
+        localMech.isAttacking ||
+        localMech.speedBoostTimer > 0;
+
+      // When moving/active: send at 25Hz (0.04s). When stationary/idle: throttle to 2Hz (0.5s) heartbeat
+      const targetInterval = isMovingOrActive ? 0.04 : 0.5;
+
+      if (this.netSyncTimer >= targetInterval) {
         this.netSyncTimer = 0;
         this.netSeq++;
         if (this.onSendPlayerState) {
-          this.onSendPlayerState({
+          const newState = {
             seq: this.netSeq,
             x: Math.round(localMech.x * 10) / 10,
             y: Math.round(localMech.y * 10) / 10,
@@ -999,7 +998,10 @@ export class GameEngine {
             isDashing: localMech.isDashing,
             dashDirX: Math.round(localMech.dashDirX * 100) / 100,
             dashDirY: Math.round(localMech.dashDirY * 100) / 100,
-          });
+            time: Date.now(),
+          };
+          this.lastSentState = newState;
+          this.onSendPlayerState(newState);
         }
       }
     } else {
@@ -1322,30 +1324,10 @@ export class GameEngine {
         (this.localRole === 'PLAYER_1' && mech.id === 'NOVA') ||
         (this.localRole === 'PLAYER_2' && mech.id === 'VEX');
 
-      if (isRemote && this.remoteTarget) {
-        // Dead-reckoning: predict subtle forward movement between network ticks
-        const targetX = this.remoteTarget.x + this.remoteTarget.vx * (dt * 0.35);
-        const targetY = this.remoteTarget.y + this.remoteTarget.vy * (dt * 0.35);
-        const dx = targetX - mech.x;
-        const dy = targetY - mech.y;
-        const dist = Math.hypot(dx, dy);
-
-        if (dist > 180) {
-          // Snap if massive desync
-          mech.x = this.remoteTarget.x;
-          mech.y = this.remoteTarget.y;
-        } else {
-          // Frame-rate independent exponential smoothing
-          const blend = 1 - Math.exp(-22 * dt);
-          mech.x += dx * blend;
-          mech.y += dy * blend;
-        }
-
-        mech.vx = this.remoteTarget.vx;
-        mech.vy = this.remoteTarget.vy;
-        mech.angle = this.remoteTarget.angle;
-        mech.walkCycle = this.remoteTarget.walkCycle;
-        mech.isDashing = this.remoteTarget.isDashing;
+      if (isRemote) {
+        // High-performance snapshot interpolation & boundary containment
+        this.interpolator.update(dt, mech, this.obstacles);
+        return; // Interpolator handles smooth position, velocity, angle, walkCycle, isDashing & obstacles
       } else {
         mech.x += mech.vx * dt;
         mech.y += mech.vy * dt;

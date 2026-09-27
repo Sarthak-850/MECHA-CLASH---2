@@ -74,9 +74,53 @@ export class MultiplayerClient {
   private pendingMessages: ClientMessage[] = [];
   private connectPromise: Promise<boolean> | null = null;
   private lastDiagnostic: ConnectionDiagnostic | null = null;
+  private rttMs = 0;
+  private lastPingTime = 0;
+  private pingInterval: any = null;
+  private packetsSentSec = 0;
+  private packetsRecvSec = 0;
+  private snapshotsRecvSec = 0;
+  private bytesSentSec = 0;
+  private bytesRecvSec = 0;
+  private netMetrics = {
+    packetsSentPerSec: 0,
+    packetsReceivedPerSec: 0,
+    snapshotsPerSec: 0,
+    bytesPerSec: 0,
+    avgPacketSizeBytes: 0,
+  };
+  private metricsInterval: any = null;
 
   constructor(callbacks: MultiplayerClientCallbacks = {}) {
     this.callbacks = callbacks;
+    this.setupMetricsLoop();
+  }
+
+  private setupMetricsLoop() {
+    if (this.metricsInterval) clearInterval(this.metricsInterval);
+    this.metricsInterval = setInterval(() => {
+      const totalPackets = this.packetsSentSec + this.packetsRecvSec;
+      const totalBytes = this.bytesSentSec + this.bytesRecvSec;
+      this.netMetrics = {
+        packetsSentPerSec: this.packetsSentSec,
+        packetsReceivedPerSec: this.packetsRecvSec,
+        snapshotsPerSec: this.snapshotsRecvSec,
+        bytesPerSec: totalBytes,
+        avgPacketSizeBytes: totalPackets > 0 ? Math.round(totalBytes / totalPackets) : 0,
+      };
+      this.packetsSentSec = 0;
+      this.packetsRecvSec = 0;
+      this.snapshotsRecvSec = 0;
+      this.bytesSentSec = 0;
+      this.bytesRecvSec = 0;
+    }, 1000);
+  }
+
+  public getNetworkTelemetry() {
+    return {
+      rttMs: this.rttMs,
+      ...this.netMetrics,
+    };
   }
 
   public setCallbacks(callbacks: MultiplayerClientCallbacks) {
@@ -320,12 +364,20 @@ export class MultiplayerClient {
 
           // Flush queued messages
           this.flushPendingMessages();
+          this.startPingLoop();
           resolve(true);
         };
 
         socket.onmessage = (event) => {
           try {
+            this.packetsRecvSec++;
+            if (typeof event.data === 'string') {
+              this.bytesRecvSec += event.data.length;
+            }
             const msg: ServerMessage = JSON.parse(event.data);
+            if (msg.type === 'REMOTE_PLAYER_STATE') {
+              this.snapshotsRecvSec++;
+            }
             this.handleServerMessage(msg);
           } catch (err) {
             console.error('[MultiplayerClient] Failed to parse server message:', err);
@@ -333,6 +385,10 @@ export class MultiplayerClient {
         };
 
         socket.onclose = (event) => {
+          if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+          }
           this.lastDiagnostic = {
             pageProtocol: typeof window !== 'undefined' ? window.location.protocol : 'https:',
             pageHost: typeof window !== 'undefined' ? window.location.host : 'unknown',
@@ -813,10 +869,23 @@ export class MultiplayerClient {
 
   private sendDirect(socket: WebSocket, msg: ClientMessage) {
     try {
-      socket.send(JSON.stringify(msg));
+      const payload = JSON.stringify(msg);
+      this.packetsSentSec++;
+      this.bytesSentSec += payload.length;
+      socket.send(payload);
     } catch (err) {
       console.error('[MultiplayerClient] Failed to send WebSocket message:', err);
     }
+  }
+
+  private startPingLoop() {
+    if (this.pingInterval) clearInterval(this.pingInterval);
+    this.pingInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.lastPingTime = performance.now();
+        this.sendDirect(this.ws, { type: 'PING' } as any);
+      }
+    }, 3000);
   }
 
   private handleServerMessage(msg: ServerMessage) {
@@ -930,6 +999,12 @@ export class MultiplayerClient {
       case 'OPPONENT_DISCONNECTED':
         if (this.callbacks.onOpponentDisconnected) {
           this.callbacks.onOpponentDisconnected(msg.message);
+        }
+        break;
+
+      case 'PONG' as any:
+        if (this.lastPingTime > 0) {
+          this.rttMs = Math.round(performance.now() - this.lastPingTime);
         }
         break;
 

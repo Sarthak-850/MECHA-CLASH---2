@@ -25,6 +25,7 @@ import {
 import { isFullscreenActive, isMobileClient } from '../utils/fullscreen';
 import { BatteryIndicator } from './BatteryIndicator';
 import { HUD } from './HUD';
+import { multiplayerClient } from '../network/multiplayerClient';
 
 interface GameCanvasProps {
   engine: GameEngine;
@@ -243,6 +244,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       engine.metrics.fps = currentFpsRef.current;
       engine.metrics.frameTimeMs = currentFrameTimeRef.current;
 
+      // Pipe multiplayer client telemetry to engine metrics for profiling
+      if (engine.gameMode === 'MULTIPLAYER') {
+        const netTelem = multiplayerClient.getNetworkTelemetry();
+        engine.metrics.rttMs = netTelem.rttMs;
+        engine.metrics.snapshotsPerSec = netTelem.snapshotsPerSec;
+        engine.metrics.packetsSentPerSec = netTelem.packetsSentPerSec;
+        engine.metrics.packetsReceivedPerSec = netTelem.packetsReceivedPerSec;
+        engine.metrics.bytesPerSec = netTelem.bytesPerSec;
+        engine.metrics.avgPacketSizeBytes = netTelem.avgPacketSizeBytes;
+      }
+
       // Update engine physics & logic with authoritative simulation delta
       engine.update(dt);
 
@@ -275,9 +287,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       // Check for HUD telemetry changes (hp, lives, round, score)
+      // Comparing floored HP avoids 60fps React re-renders from micro-damage ticks
+      const vexHpInt = Math.floor(engine.vex.hp);
+      const novaHpInt = Math.floor(engine.nova.hp);
+      const lastVexHpInt = Math.floor(lastHpRef.current.vexHp);
+      const lastNovaHpInt = Math.floor(lastHpRef.current.novaHp);
+
       if (
-        Math.abs(engine.vex.hp - lastHpRef.current.vexHp) > 0.1 ||
-        Math.abs(engine.nova.hp - lastHpRef.current.novaHp) > 0.1 ||
+        vexHpInt !== lastVexHpInt ||
+        novaHpInt !== lastNovaHpInt ||
         engine.vex.lives !== lastHpRef.current.vexLives ||
         engine.nova.lives !== lastHpRef.current.novaLives ||
         engine.currentRound !== lastHpRef.current.round ||
@@ -424,6 +442,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             <span className="text-right font-semibold text-cyan-400">
               {engine.metrics.isMultiplayer ? `ONLINE (${engine.multiplayerRoomCode})` : 'LOCAL'}
             </span>
+            {engine.metrics.isMultiplayer && (
+              <>
+                <span>RTT / Jitter:</span>
+                <span className="text-right text-cyan-300 font-mono-data">
+                  {engine.metrics.rttMs}ms / {engine.metrics.jitterMs}ms
+                </span>
+                <span>Snapshots:</span>
+                <span className="text-right text-cyan-300 font-mono-data">
+                  {engine.metrics.snapshotsPerSec}/s (buf: {engine.metrics.interpolationBufferCount})
+                </span>
+                <span>Packets In/Out:</span>
+                <span className="text-right font-mono-data">
+                  {engine.metrics.packetsReceivedPerSec}/s ↓ | {engine.metrics.packetsSentPerSec}/s ↑
+                </span>
+                <span>Avg Pkt Size:</span>
+                <span className="text-right font-mono-data">
+                  {engine.metrics.avgPacketSizeBytes} B
+                </span>
+              </>
+            )}
           </div>
           <div className="mt-2 pt-1 border-t border-slate-800/80 text-[8px] text-slate-400 text-center">
             Toggle with [O] key or HUD telemetry icon

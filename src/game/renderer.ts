@@ -14,6 +14,7 @@ import { ARENA_HEIGHT, ARENA_WIDTH } from './constants';
 export class GameRenderer {
   private ctx: CanvasRenderingContext2D;
   private animTime: number = 0;
+  private powerUpGradients: Map<string, CanvasGradient> = new Map();
 
   constructor(ctx: CanvasRenderingContext2D) {
     this.ctx = ctx;
@@ -105,18 +106,16 @@ export class GameRenderer {
     ctx.strokeStyle = gridColor;
     const gridSize = 40;
 
+    ctx.beginPath();
     for (let x = 0; x <= ARENA_WIDTH; x += gridSize) {
-      ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, ARENA_HEIGHT);
-      ctx.stroke();
     }
     for (let y = 0; y <= ARENA_HEIGHT; y += gridSize) {
-      ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(ARENA_WIDTH, y);
-      ctx.stroke();
     }
+    ctx.stroke();
 
     // Center Arena Emblem / Ring
     const centerX = ARENA_WIDTH / 2;
@@ -369,6 +368,18 @@ export class GameRenderer {
     }
   }
 
+  private getPowerUpGradient(type: string, color: string, radius: number): CanvasGradient {
+    let grad = this.powerUpGradients.get(type);
+    if (!grad) {
+      grad = this.ctx.createRadialGradient(0, 0, 2, 0, 0, radius);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.5, color);
+      grad.addColorStop(1, 'rgba(0,0,0,0.8)');
+      this.powerUpGradients.set(type, grad);
+    }
+    return grad;
+  }
+
   private drawPowerUps(powerUps: PowerUp[]) {
     const ctx = this.ctx;
     for (const p of powerUps) {
@@ -399,23 +410,21 @@ export class GameRenderer {
         label = 'DASH';
       }
 
+      ctx.translate(p.x, py);
+
       // Outer glowing ring
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.shadowBlur = 10 + pulse * 6;
       ctx.shadowColor = color;
       ctx.beginPath();
-      ctx.arc(p.x, py, p.radius + pulse * 4, 0, Math.PI * 2);
+      ctx.arc(0, 0, p.radius + pulse * 4, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Power-up container sphere
-      const grad = ctx.createRadialGradient(p.x, py, 2, p.x, py, p.radius);
-      grad.addColorStop(0, '#ffffff');
-      grad.addColorStop(0.5, color);
-      grad.addColorStop(1, 'rgba(0,0,0,0.8)');
-      ctx.fillStyle = grad;
+      // Power-up container sphere using cached gradient
+      ctx.fillStyle = this.getPowerUpGradient(p.type, color, p.radius);
       ctx.beginPath();
-      ctx.arc(p.x, py, p.radius, 0, Math.PI * 2);
+      ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
       ctx.fill();
 
       // Icon / Symbol inside
@@ -424,12 +433,12 @@ export class GameRenderer {
       ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(icon, p.x, py);
+      ctx.fillText(icon, 0, 0);
 
       // Label below
       ctx.font = '9px Orbitron, sans-serif';
       ctx.fillStyle = color;
-      ctx.fillText(label, p.x, py + p.radius + 12);
+      ctx.fillText(label, 0, p.radius + 12);
 
       ctx.restore();
     }

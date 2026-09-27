@@ -185,6 +185,14 @@ export interface DebugPerformanceMetrics {
   aiPersonality?: string;
   isMultiplayer: boolean;
   pingMs?: number;
+  rttMs?: number;
+  snapshotsPerSec?: number;
+  packetsSentPerSec?: number;
+  packetsReceivedPerSec?: number;
+  bytesPerSec?: number;
+  avgPacketSizeBytes?: number;
+  interpolationBufferCount?: number;
+  jitterMs?: number;
 }
 
 export interface Particle {

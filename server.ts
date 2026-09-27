@@ -71,6 +71,9 @@ interface PlayerSession {
   role: 'PLAYER_1' | 'PLAYER_2';
   roomCode: string;
   lastPing: number;
+  latestState?: any;
+  latestStateTime?: number;
+  lastBroadcastTime?: number;
 }
 
 interface RoomData {
@@ -92,6 +95,7 @@ interface RoomData {
   powerUpInterval?: NodeJS.Timeout | null;
   createdAt: number;
   lastActivity: number;
+  lastSimTime?: number;
 }
 
 const rooms = new Map<string, RoomData>();
@@ -327,7 +331,7 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
         (ws as any).isAlive = true;
         if (currentSession) currentSession.lastPing = Date.now();
         try {
-          ws.send(JSON.stringify({ type: 'PONG' }));
+          ws.send(JSON.stringify({ type: 'PONG', timestamp: msg.timestamp }));
         } catch {}
         return;
       }
@@ -455,13 +459,21 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
         const room = rooms.get(currentSession.roomCode);
         if (!room || room.status !== 'BATTLE') return;
 
-        // Relay position state to opponent
+        const serverNow = Date.now();
+        const stateWithTimestamp = {
+          ...msg.state,
+          serverTime: serverNow,
+        };
+        currentSession.latestState = stateWithTimestamp;
+        currentSession.latestStateTime = serverNow;
+
+        // Relay position state to opponent with authoritative timestamp
         broadcastToRoom(
           room,
           {
             type: 'REMOTE_PLAYER_STATE',
             role: currentSession.role,
-            state: msg.state,
+            state: stateWithTimestamp,
           },
           ws
         );
@@ -811,12 +823,84 @@ app.post('/api/multiplayer/room/leave', (req, res) => {
   res.json({ success: true });
 });
 
+// Authoritative Server Simulation Loop (30 ticks/second) using delta time
+let lastServerTick = performance.now();
+let serverTickDurationMs = 0;
+
+const serverSimulationLoop = setInterval(() => {
+  const now = performance.now();
+  const rawDt = (now - lastServerTick) / 1000;
+  lastServerTick = now;
+
+  // Clamp delta time between 1ms (1000fps) and 100ms (10fps) to eliminate accumulated spikes
+  const dt = Math.max(0.001, Math.min(0.1, rawDt));
+  const tickStart = performance.now();
+
+  for (const [_code, room] of rooms.entries()) {
+    if (room.status !== 'BATTLE') continue;
+
+    const wallNow = Date.now();
+    const p1 = room.players.PLAYER_1;
+    const p2 = room.players.PLAYER_2;
+
+    // Idle keepalive pacer: If a player is stationary and hasn't transmitted state in > 400ms,
+    // re-broadcast their latest state so opponent interpolation buffer never starves
+    if (
+      p1 &&
+      p1.latestState &&
+      p1.latestStateTime &&
+      wallNow - p1.latestStateTime > 400 &&
+      wallNow - (p1.lastBroadcastTime || 0) > 400
+    ) {
+      p1.lastBroadcastTime = wallNow;
+      broadcastToRoom(
+        room,
+        {
+          type: 'REMOTE_PLAYER_STATE',
+          role: 'PLAYER_1',
+          state: {
+            ...p1.latestState,
+            serverTime: wallNow,
+          },
+        },
+        p1.ws
+      );
+    }
+
+    if (
+      p2 &&
+      p2.latestState &&
+      p2.latestStateTime &&
+      wallNow - p2.latestStateTime > 400 &&
+      wallNow - (p2.lastBroadcastTime || 0) > 400
+    ) {
+      p2.lastBroadcastTime = wallNow;
+      broadcastToRoom(
+        room,
+        {
+          type: 'REMOTE_PLAYER_STATE',
+          role: 'PLAYER_2',
+          state: {
+            ...p2.latestState,
+            serverTime: wallNow,
+          },
+        },
+        p2.ws
+      );
+    }
+  }
+
+  serverTickDurationMs = Math.round((performance.now() - tickStart) * 100) / 100;
+}, 33);
+
 // Health check endpoints (both /health and /api/health)
 const handleHealthCheck = (_req: express.Request, res: express.Response) => {
   res.json({
     status: 'ok',
     activeRooms: rooms.size,
-    uptime: process.uptime(),
+    serverTickRate: 30,
+    serverTickDurationMs,
+    uptime: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
   });
 };

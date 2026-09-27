@@ -13,6 +13,8 @@ export interface NetworkPlayerInput {
   isDashing: boolean;
   dashDirX: number;
   dashDirY: number;
+  time?: number; // client send timestamp in ms
+  serverTime?: number; // authoritative server timestamp in ms
 }
 
 export interface NetworkAttackEvent {
