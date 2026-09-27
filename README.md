@@ -1,92 +1,166 @@
-# MECHA CLASH
+# ⚔️ MECHA CLASH
 
-> **A fast-paced, cybernetic 2D top-down mecha arena combat game built with React 19, TypeScript, HTML5 Canvas, WebSockets, and Tailwind CSS.**
+<p align="center">
+  <img src="./public/icon.svg" alt="MECHA CLASH Logo" width="120" height="120" />
+</p>
 
-Pilot the high-agility combat chassis **VEX** against **NOVA**, an adaptive neural-network combat AI, or duel friends over the internet in **Real-Time Online Multiplayer**. Master directional movement, precision energy-blade slashes, tactical burst dashes with invulnerability frames (i-frames), omnidirectional **360° Energy Burst Ultimates**, and arena power-ups while battling across multi-stage **Boss Phases** and dynamic environmental hazards.
+<p align="center">
+  <strong>A high-octane, cybernetic 2D top-down mecha arena combat game built with React 19, TypeScript, HTML5 Canvas 2D, WebSockets, and Tailwind CSS v4.</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/React-19.0-61DAFB?logo=react&logoColor=black" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript-7.0-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vite-8.3-646CFF?logo=vite&logoColor=white" alt="Vite 8" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-v4.3-38B2AC?logo=tailwind-css&logoColor=white" alt="Tailwind CSS v4" />
+  <img src="https://img.shields.io/badge/WebSockets-Real--Time-00B4D8?logo=websocket&logoColor=white" alt="WebSockets" />
+  <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
+</p>
+
+---
+
+## 📖 Table of Contents
+
+- [Overview](#-overview)
+- [Key Features](#-key-features)
+- [Game Modes](#-game-modes)
+- [Combat System & Controls](#-combat-system--controls)
+- [Tech Stack](#-tech-stack)
+- [Project Structure](#-project-structure)
+- [Network Architecture & Dual-WebSocket System](#-network-architecture--dual-websocket-system)
+- [Installation & Setup](#-installation--setup)
+- [Available Scripts](#-available-scripts)
+- [Troubleshooting & FAQs](#-troubleshooting--faqs)
+- [Environment Variables](#-environment-variables)
+- [Deployment](#-deployment)
+- [Author & License](#-author--license)
+
+---
+
+## ⚡ Overview
+
+Pilot the high-agility combat chassis **VEX** against **NOVA**, an adaptive neural-network combat AI, or challenge other players across the globe in **Real-Time Cross-Device Online Multiplayer**.
+
+Master directional maneuvering, precision energy-blade strikes, burst thruster dashes equipped with invulnerability frames (`i-frames`), omnidirectional **360° Energy Burst Ultimates**, and arena pickups while dodging dynamic environmental hazards and surviving multi-phase **Boss Encounters**.
+
+```text
++-------------------------------------------------------------------------------+
+| [PLAYER 1: VEX]                    ROUND 1                   [PLAYER 2: NOVA] |
+| HP: [|||||||||||||||||||] 100/100  SCORE: 4,850   HP: [|||||||||||||.....] 65 |
+| LIVES: ● ● ●                                                      LIVES: ● ● ○ |
+|                                                                               |
+|                       ⚡ [POWER-UP: DOUBLE DAMAGE]                            |
+|                                                                               |
+|            ( VEX )                                    ( NOVA )                |
+|               \====> [ENERGY BLADE SLASH]                 /                   |
+|                                                                               |
+|                                               (=== PULSING LASER GRID ===)    |
+|                                                                               |
+|  [VIRTUAL JOYSTICK]                                      [BURST] [DASH] [ATK] |
++-------------------------------------------------------------------------------+
+```
 
 ---
 
 ## 🚀 Key Features
 
 ### 🌐 Real-Time Online Multiplayer (1v1 Cross-Device)
-- **Room Creation**: Host matches and generate a unique, short, easy-to-share 5-character room code (e.g., `7K4P2`).
-- **Room Joining**: Opponents on any device (phone, laptop, desktop) join by entering the room code.
-- **Cross-Platform & Cross-Network Play**: Works seamlessly across different networks (e.g. Player 1 on Laptop Wi-Fi, Player 2 on Mobile Data).
-- **Sub-50ms State Synchronization**:
-  - Continuous 20Hz throttled movement synchronization with smooth interpolation (no teleportation or stuttering).
-  - Synchronized attacks, blade sweeps, dash thrusters, and 360° Energy Bursts.
-  - Server-verified damage calculation, hull hit stun, shield deflection, and knockback impulses.
-- **Dynamic Power-Up Spawning**: Synchronized power-up drops (Shield, 2× Damage, Speed Boost, Repair, Energy) spawned and collected in real time.
-- **Best-of-3 Match Flow**: 2 round wins to claim victory, accompanied by round end overlays, victory/defeat cards, mutual rematch requests, and opponent disconnection recovery.
+- **Instant Room Codes**: Host generates a compact, human-readable 5-character alphanumeric code (e.g., `7K4P2`).
+- **Cross-Platform Play**: Seamless gameplay across desktops, laptops, tablets, and smartphones over Wi-Fi or mobile cellular networks.
+- **Sub-50ms Low-Latency Synchronization**:
+  - 20Hz throttled movement state synchronization with linear interpolation (`lerp`) for stutter-free position rendering.
+  - Synchronized blade slashes, thruster dashes, and 360° Energy Burst activations.
+  - Server-arbitrated damage calculations, knockback impulses, and shield deflections.
+- **Synchronized Power-Up Spawns**: Real-time pickup drops visible and contestable by both combatants simultaneously.
+- **Best-of-3 Competitive Match Flow**: Full round-transition overlays, victory/defeat recaps, rematch voting, and opponent disconnect detection with auto-recovery.
 
-### ⚔️ Combat System & Ultimate Mechanics
-- **Energy-Blade Slash**: Close-quarters arc sweep attack with hit stun, reach calculations, and power strike multipliers.
-- **Burst Dash & I-Frames**: Tactical thruster dash providing invulnerability frames (`i-frames`) to weave through incoming slashes and laser barriers.
-- **360° Energy Burst (Ultimate)**:
-  - Radial shockwave discharge dealing high damage and strong radial knockback.
-  - Grants temporary invulnerability during activation to escape lethal pinches.
-  - Dedicated cooldown gauge with visual particle shockwaves and audio cues.
-- **Damage & Armor Dynamics**: Health management (`100 HP`), 3 lives per match, hit stun frames, invulnerability recovery windows, and shield damage absorption.
+### ⚔️ Fluid Cybernetic Combat Mechanics
+- **Energy-Blade Slash**: Close-quarters arc sweep dealing high-impact damage with directional hit stun.
+- **Burst Dash with I-Frames**: Instant velocity boost providing invulnerability frames (`i-frames`) to weave through incoming strikes and laser beams.
+- **360° Energy Burst (Ultimate)**: Radial kinetic shockwave clearing hazards, dealing high radial damage, and granting temporary invulnerability during activation.
+- **Armor & Hull Integrity**: 100 HP hull integrity, 3 lives per duel, shield absorption mechanics, and hit-recovery windows.
 
-### 🤖 Mecha Types & Boss Phases
-- **VEX (Player Unit)**: High-agility striker equipped with twin thrusters, plasma blade emitters, and the radial Energy Burst core.
-- **NOVA (AI Combatant)**: Adaptive machine intelligence with multiple combat chassis types and personality configurations:
-  - **Chassis Archetypes**:
-    - **Balanced Sentinel**: Calculated spacing, standard reach, and adaptive counters.
-    - **Brawler**: High aggression, relentless close-quarters pursuit, and quick punish windows.
-    - **Flanker**: High-speed circling, diagonal thruster bursts, and bait tactics.
-    - **Kiter**: Distance-keeping, zone control, and opportunistic strikes.
-    - **Apex Overlord**: Master-tier AI combining predictive movement, frame-perfect dodges, and aggressive power-up denial.
-  - **Boss Tiers & Multi-Phase Encounters**:
-    - **Mini-Bosses** (e.g., *Level 10 Prototype Sentinel*): Enhanced HP pools and aggressive dash patterns.
-    - **Boss Chassis** (e.g., *NOVA STRIKER*, *NOVA WARLORD*): Multi-round stamina, dynamic barrier activation, and faster attack cycles.
-    - **Major & Final Bosses** (e.g., *Level 40 Cyber Titan*, *Level 50 APEX NOVA*): Screen-shaking strikes, dynamic phase shifts, laser grid overloads, and high armor scaling.
+### 🤖 Adaptive AI Personalities (NOVA)
+- **Balanced Sentinel**: Calculated positioning, adaptive counters, and steady zoning.
+- **Brawler**: Relentless close-quarters aggression, cornering maneuvers, and rapid punish combos.
+- **Flanker**: High-speed circling, diagonal thruster cuts, and bait tactics.
+- **Kiter**: Distance control, opportunistic hit-and-run strikes, and power-up denial.
+- **Apex Overlord**: High-tier AI combining predictive movement, frame-perfect dodges, and aggressive power-up starvation.
 
-### 🎮 Game Modes
-1. **Quick Duel**: Instant single-match arena duel across 5 difficulty levels (`NORMAL`, `MEDIUM`, `HARD`, `EXTREME_HARD`, `HARDCORE`).
-2. **50-Level Campaign**: Spans 5 distinct thematic chapters with progressive difficulty, level briefings, unique arena layouts, and boss encounters:
+### ⚡ Battlefield Hazards & Tactical Pickups
+- **Environmental Hazards**:
+  - **Collapsing Arena Panels**: Floor plates flash flashing warning borders before dropping into the void.
+  - **Sweeping Laser Barriers**: Horizontal and vertical laser beams moving systematically across the combat zone.
+  - **Electrical Hazard Nodes**: Pulsing static traps that zap combatants within their radius.
+- **Combat Pickups**:
+  - `SHIELD`: Grants complete damage immunity against the next hit.
+  - `POWER_ATTACK`: Doubles attack damage on the next blade slash (2× damage).
+  - `SPEED_BOOST`: Increases thruster velocity to 300 px/sec.
+  - `HEAL`: Restores 25 points of critical hull integrity.
+  - `ENERGY`: Instantly refreshes Dash and Ultimate cooldown gauges.
+
+### 📱 Ergonomic Mobile & Desktop Experience
+- **Desktop Controls**: Full keyboard (WASD / Arrows / Space / F / G) and mouse buttons.
+- **Mobile Virtual Touchpad**: High-precision floating analog joystick on the left screen half, tactile action buttons (`ATTACK`, `DASH`, `BURST`) on the right.
+- **Live Battery Monitor**: Real-time device battery indicator and charging status updating every 30 seconds.
+- **Fullscreen Mode**: One-touch fullscreen toggle with landscape lock optimization.
+
+---
+
+## 🎮 Game Modes
+
+1. **Quick Duel**: Instant 1v1 exhibition skirmish against NOVA across 5 selectable difficulty tiers:
+   - `NORMAL` — Balanced for newcomers.
+   - `MEDIUM` — Faster AI reactions and offensive dashes.
+   - `HARD` — Relentless pursuit and tactical power-up collection.
+   - `EXTREME_HARD` — Predictive dodging and high combat pressure.
+   - `HARDCORE` — Frame-perfect AI aggression and minimal reaction windows.
+2. **50-Level Campaign**: 5 thematic chapters featuring unique color matrices, mission briefings, and multi-phase boss fights:
    - **Chapter 1: Awakening** (Levels 1–10 • Cyan Matrix Theme)
    - **Chapter 2: Rising Threat** (Levels 11–20 • Neon Purple Theme)
    - **Chapter 3: War Machine** (Levels 21–30 • Crimson Forge Theme)
    - **Chapter 4: Cyber Siege** (Levels 31–40 • Emerald Nexus Theme)
-   - **Chapter 5: Apex Overlord** (Levels 41–50 • Gold Core Theme)
-3. **Endless Survival**: Fight an endless succession of increasingly lethal AI opponents with persistent score tracking and difficulty scaling.
+   - **Chapter 5: Apex Overlord** (Levels 41–50 • Gold Core Final Confrontation)
+3. **Endless Survival**: Battle an endless stream of increasingly deadly mecha adversaries with persistent score tracking and global high scores.
+4. **Online Multiplayer**: Real-time cross-device lobby battles with custom room codes and best-of-3 competition.
 
-### ⚡ Arena Hazards & Power-Ups
-- **Battlefield Hazards**:
-  - **Collapsing Platforms**: Tactical floor panels that flash warnings before collapsing into lethal voids.
-  - **Moving Laser Barriers**: Sweeping horizontal and vertical energy beams that damage units on contact.
-  - **Hazard Nodes**: Timed pulsing electrical zones.
-- **Combat Pickups**:
-  - `SPEED_BOOST`: Increases thruster velocity to 300 px/sec.
-  - `SHIELD`: Complete damage negation for one attack or hazard impact.
-  - `POWER_ATTACK`: 2× damage output on the next blade slash.
-  - `HEAL`: Restores critical hull integrity (+25 HP).
-  - `ENERGY`: Instantly refreshes Dash and Ultimate cooldowns.
+---
 
-### 📱 Responsive Desktop & Mobile Experience
-- **Desktop Controls**: Full keyboard (WASD / Arrows / Space / F / G) and mouse support.
-- **Mobile Virtual Controller**: Ergonomic virtual analog joystick on the left; prominent action buttons (`ATTACK`, `DASH`, `BURST`) on the right.
-- **Mobile HUD Utilities**:
-  - Real-time battery status and charging monitor updating every 30 seconds for session management.
-  - Compact 36×36px top-right toggle button utilizing standard Fullscreen API and landscape orientation lock.
+## 🕹️ Combat System & Controls
+
+### Controls Reference
+
+| Action | Desktop Keyboard | Mouse / Touch Controls |
+|:---|:---|:---|
+| **Move Up / Down / Left / Right** | `W`, `A`, `S`, `D` / Arrow Keys | Virtual Analog Joystick (Mobile Left Screen) |
+| **Energy Slash (Attack)** | `F` | Left Mouse Click / `ATTACK` Button |
+| **Burst Dash (i-frames)** | `G` | Right Mouse Click / `DASH` Button |
+| **360° Energy Burst (Ultimate)** | `Space` | `BURST` Button |
+| **Pause Game** | `P` or `Escape` | `PAUSE` Button (Top HUD) |
+| **Mute / Unmute Audio** | `M` | Audio Icon (Top HUD) |
+| **Fullscreen Toggle** | `F11` | Fullscreen Icon (Top-Right HUD) |
+
+### Tactical Combat Tips
+- **Exploit I-Frames**: When an opponent begins an energy slash or a laser barrier sweeps toward you, dash directly into the hazard. The invulnerability frames will pass you through without receiving damage.
+- **Deny Pickups**: Prioritize contested items in the arena center. Denying an opponent a `SHIELD` or `2× DAMAGE` pickup is crucial for match control.
+- **Burst Defense**: Use your 360° Energy Burst defensively when cornered against an arena boundary or when an enemy executes a dash-slash combo.
 
 ---
 
 ## 🛠️ Tech Stack
 
 | Technology | Purpose |
-|---|---|
-| **[React 19](https://react.dev/)** | Component-driven UI, state management, and modal overlays |
-| **[TypeScript](https://www.typescriptlang.org/)** | Strict type safety for game state, collision math, and network protocol |
-| **[WebSockets (ws)](https://github.com/websockets/ws)** | Low-latency real-time multiplayer server & client room protocol |
-| **[Express 4](https://expressjs.com/)** | Full-stack server hosting WebSocket server and Vite middleware |
-| **[Vite 8](https://vitejs.dev/)** | Next-generation frontend tooling and fast HMR development server |
-| **[Tailwind CSS v4](https://tailwindcss.com/)** | Modern utility-first styling with `@tailwindcss/vite` |
-| **HTML5 Canvas 2D API** | Custom high-performance 60 FPS renderer with camera shake and particle systems |
-| **Web Audio API** | 100% procedural sound effects synthesis (zero external audio file dependencies) |
-| **[Lucide React](https://lucide.dev/)** | Clean, minimalist icons for HUD and menu interfaces |
-| **[Motion](https://motion.dev/)** | Smooth UI transitions and menu animations |
+|:---|:---|
+| **[React 19](https://react.dev/)** | State-driven user interface, dynamic modals, and HUD overlays |
+| **[TypeScript](https://www.typescriptlang.org/)** | Type safety across game entities, physics, and network payloads |
+| **[Vite 8](https://vitejs.dev/)** | Next-generation build tooling and lightning-fast HMR dev server |
+| **[Tailwind CSS v4](https://tailwindcss.com/)** | Ultra-performant utility-first styling with `@tailwindcss/vite` |
+| **[WebSockets (ws)](https://github.com/websockets/ws)** | Low-latency binary/JSON real-time multiplayer server and room arbiter |
+| **[Express 4](https://expressjs.com/)** | Full-stack server hosting REST room endpoints and Vite middleware |
+| **HTML5 Canvas 2D API** | Custom 60 FPS graphics engine with particle emitters and screen shake |
+| **Web Audio API** | 100% procedural sound effect synthesizer (zero external audio assets) |
+| **[Lucide React](https://lucide.dev/)** | Minimalist vector icons for UI and HUD controls |
+| **[Motion](https://motion.dev/)** | Smooth animated modal entries and screen transitions |
 
 ---
 
@@ -94,57 +168,93 @@ Pilot the high-agility combat chassis **VEX** against **NOVA**, an adaptive neur
 
 ```text
 mecha-clash/
-├── server.ts                  # Express HTTP server + WebSocket real-time room engine
-├── index.html                 # HTML5 entry point with safe-area meta tags
-├── package.json               # Scripts, project dependencies, and metadata
-├── vite.config.ts             # Vite build configuration (React & Tailwind v4 plugins)
-├── tsconfig.json              # TypeScript compiler settings
-├── metadata.json              # Applet metadata, permissions, and capabilities
-├── .env.example               # Example environment variable template
+├── server.ts                   # Express full-stack server + WebSocket multiplayer room manager
+├── vite.config.ts              # Vite 8 configuration with React and Tailwind v4 plugins
+├── index.html                  # HTML5 entry with mobile safe-area viewport tags
+├── package.json                # Project dependencies, scripts, and package metadata
+├── tsconfig.json               # TypeScript strict configuration
+├── .env.example                # Template for environment variables
+├── public/
+│   ├── icon.svg                # Vector mecha emblem
+│   └── manifest.json           # Web app manifest for PWA installation
 └── src/
-    ├── main.tsx               # React application mounting point
-    ├── App.tsx                # Primary view router (Menu, Multiplayer, Campaign, Game)
-    ├── index.css              # Global styles, fonts, and Tailwind directives
+    ├── main.tsx                # Application mounting point
+    ├── App.tsx                 # Screen router (Menu, Campaign, Multiplayer, Battle)
+    ├── index.css               # Design system, cybernetic fonts, and Tailwind directives
     ├── audio/
-    │   └── soundManager.ts    # Procedural Web Audio API sound synthesizer
+    │   └── soundManager.ts     # Procedural Web Audio API sound generator
     ├── components/
-    │   ├── MultiplayerLobby.tsx # Room creation, room joining, code sharing, status
-    │   ├── MultiplayerModal.tsx # Match victory/defeat results, rematch, opponent DC
-    │   ├── CampaignSelect.tsx # 50-level campaign mission selection map
-    │   ├── CountdownOverlay.tsx # Pre-round countdown HUD (3... 2... 1... FIGHT!)
-    │   ├── DefeatModal.tsx    # Defeat recap with retry and menu navigation
-    │   ├── DifficultySelect.tsx # Quick Duel tier selection (Normal to Hardcore)
-    │   ├── GameCanvas.tsx     # Game loop runner, canvas mount, and touch overlay
-    │   ├── HowToPlay.tsx      # Comprehensive combat primer and controls guide
-    │   ├── HUD.tsx            # Real-time health gauges, mobile battery monitor & controls
-    │   ├── MainMenu.tsx       # Landing screen with mode selection & audio toggles
-    │   ├── PauseModal.tsx     # In-game pause menu with restart & resume options
-    │   ├── RoundEndOverlay.tsx# Dynamic round win/loss transition banner
-    │   ├── VictoryModal.tsx   # Victory recap with match stats and progression
-    │   └── VirtualControls.tsx# Virtual analog thumbstick and tactile action triggers
+    │   ├── CampaignSelect.tsx  # 50-level campaign mission roadmap
+    │   ├── CountdownOverlay.tsx# Pre-round countdown banner (3... 2... 1... FIGHT!)
+    │   ├── DefeatModal.tsx     # Defeat recap with retry and menu navigation
+    │   ├── DifficultySelect.tsx# Quick Duel difficulty picker
+    │   ├── GameCanvas.tsx      # Main game canvas mount and loop driver
+    │   ├── HowToPlay.tsx       # Combat primers and control instructions
+    │   ├── HUD.tsx             # Real-time health gauges, battery stats, controls
+    │   ├── MainMenu.tsx        # Title screen with mode selectors
+    │   ├── MultiplayerLobby.tsx# Room creation, joining, and code sharing
+    │   ├── MultiplayerModal.tsx# Post-match multiplayer victory/defeat & rematch
+    │   ├── PauseModal.tsx      # In-game pause menu
+    │   ├── RoundEndOverlay.tsx # Round transition banner
+    │   ├── VictoryModal.tsx    # Campaign & Endless victory recaps
+    │   └── VirtualControls.tsx # Mobile on-screen analog joystick and buttons
     ├── game/
-    │   ├── constants.ts       # Combat tuning values, colors, chapters, and arena geometry
-    │   ├── engine.ts          # Core game loop, multiplayer lerp, combat physics, damage sync
-    │   ├── ai.ts              # Adaptive AI controller (5 personality archetypes)
-    │   └── renderer.ts        # 60 FPS Canvas 2D graphics engine and particle rendering
+    │   ├── constants.ts        # Arena dimensions, weapon metrics, and damage values
+    │   ├── engine.ts           # Game physics, collision detection, and network lerp
+    │   ├── ai.ts               # Adaptive AI decision tree and personality profiles
+    │   └── renderer.ts         # High-performance Canvas 2D renderer and particles
     ├── network/
-    │   └── multiplayerClient.ts # Resilient WebSocket client with auto-reconnect & state sync
+    │   └── multiplayerClient.ts# Resilient WebSocket client with automatic reconnection
     ├── types/
-    │   ├── game.ts            # Type definitions for entities, obstacles, hazards, and buffs
-    │   └── multiplayer.ts     # Client/Server network protocol message schemas
+    │   ├── game.ts             # Game entities, hazards, power-ups, and level definitions
+    │   └── multiplayer.ts      # Client/server network protocol message interfaces
     └── utils/
-        └── fullscreen.ts      # Cross-browser mobile Fullscreen & landscape orientation helper
+        └── fullscreen.ts       # Fullscreen API wrapper with mobile orientation lock
 ```
 
 ---
 
-## ⚙️ Installation & Setup
+## 🔌 Network Architecture & Dual-WebSocket System
 
-Follow these steps to run **MECHA CLASH** locally:
+MECHA CLASH implements a clean separation between development tooling and game runtime sockets:
+
+```text
+                                  Browser Client
+                                        │
+                    ┌───────────────────┴───────────────────┐
+                    ▼                                       ▼
+             Vite HMR Client                    MECHA CLASH Game Client
+         (Path: /?token=...)                       (Path: /ws?room=...)
+     sec-websocket-protocol: vite-hmr                        │
+                    │                                       │
+                    └───────────────────┬───────────────────┘
+                                        ▼
+                               Node.js HTTP Server
+                            (server.on('upgrade', ...))
+                                        │
+                    ┌───────────────────┴───────────────────┐
+                    ▼                                       ▼
+        Path === '/' & vite-hmr?                 Path === '/ws'?
+                    │                                       │
+                    ▼                                       ▼
+            Vite Dev Server                   ws.WebSocketServer
+         (Code Hot-Reloading)               (Room State, 20Hz Sync)
+```
+
+### REST API Endpoints
+- `POST /api/multiplayer/room/create` — Generates a unique 5-char room code and registers Player 1.
+- `POST /api/multiplayer/room/join` — Validates code, checks capacity, and registers Player 2.
+- `POST /api/multiplayer/room/leave` — Handles player departure and cleans up abandoned rooms.
+- `GET  /api/multiplayer/room/:code` — Returns current room state and connected players.
+- `GET  /health` & `GET /api/health` — Service health check endpoint.
+
+---
+
+## 💻 Installation & Setup
 
 ### 1. Prerequisites
-- **Node.js**: `v18.x`, `v20.x`, or higher
-- **npm**: `v9.x` or higher (bundled with Node.js)
+- **Node.js**: `v18.0.0` or higher (recommended: Node `v20.x` or `v22.x`)
+- **npm**: `v9.0.0` or higher
 
 ### 2. Clone the Repository
 ```bash
@@ -159,141 +269,113 @@ npm install
 
 ---
 
-## ▶️ Running the Project
+## 🚀 Available Scripts
 
-### Development Server
-Start the local Vite development server at `http://localhost:3000`:
-```bash
-npm run dev
-```
+In the project directory, you can run:
 
-### Production Build
-Compile TypeScript and generate an optimized production bundle in the `dist` directory:
-```bash
-npm run build
-```
+### `npm run dev`
+Starts the full-stack development server at `http://localhost:3000`.  
+Includes both the **Express API + WebSocket Server** and **Vite Hot Module Replacement (HMR)** middleware.
 
-### Preview Production Build
-Serve the compiled production bundle locally to test final performance:
-```bash
-npm run preview
-```
+### `npm run dev:web`
+Starts the standalone Vite development server without the Express backend (ideal for UI/canvas iteration).
 
-### Type Checking & Linting
-Validate the codebase for TypeScript errors:
-```bash
-npm run lint
-```
+### `npm run build`
+Compiles TypeScript and bundles production-ready static assets into the `dist/` directory via Vite.
 
----
+### `npm run start`
+Launches the full-stack production server (`tsx server.ts` with `NODE_ENV=production`) serving the pre-compiled `dist/` bundle on port 3000.
 
-## 🔑 Environment Variables (Gemini API)
+### `npm run preview`
+Locally previews the production build output from `dist/` using Vite preview.
 
-MECHA CLASH runs completely client-side in the browser. When integrating server-side or extended AI features using the Google Gen AI SDK (`@google/genai`), configure your environment variables:
+### `npm run lint`
+Runs the TypeScript compiler (`tsc --noEmit`) to validate type safety across all files without emitting code.
 
-1. Copy `.env.example` to create a local `.env` file:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Configure the following variables in `.env`:
-   ```env
-   # GEMINI_API_KEY: Required for server-side Gemini AI API interactions.
-   # In Google AI Studio, this is automatically injected via the Secrets panel.
-   GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-
-   # APP_URL: The hosting domain or Cloud Run service URL.
-   APP_URL="http://localhost:3000"
-   ```
-
-> **Security Note:** Never commit your actual `.env` file or expose secret API keys to public repositories.
+### `npm run clean`
+Removes the `dist/` folder and compiled artifacts.
 
 ---
 
-## 🎮 How to Play
+## ❓ Troubleshooting & FAQs
 
-### Controls Reference
+### Error: `listen EADDRINUSE: address already in use 0.0.0.0:3000`
+**Cause**: Another process (e.g., an earlier running server instance) is already using port `3000`.
 
-| Action | Desktop Keyboard | Mouse / Touch Controls |
-|---|---|---|
-| **Move Up / Down / Left / Right** | `W`, `A`, `S`, `D` / Arrow Keys | Virtual Analog Joystick (Mobile) |
-| **Energy Slash (Attack)** | `F` | Left Mouse Click / `ATTACK` Touch Button |
-| **Burst Dash (i-frames)** | `G` | Right Mouse Click / `DASH` Touch Button |
-| **Energy Burst (Ultimate)** | `Space` | `BURST` Touch Button |
-| **Pause Game** | `P` or `Escape` | `PAUSE` HUD Button |
-| **Mute / Unmute Audio** | `M` | Volume Icon in HUD |
+**Solutions**:
+- **Option 1: Kill the process on port 3000**:
+  - *Windows (PowerShell)*:
+    ```powershell
+    # Find process on port 3000
+    netstat -ano | findstr :3000
+    # Terminate process by PID (e.g. 53848)
+    taskkill /F /PID 53848
+    ```
+  - *macOS / Linux*:
+    ```bash
+    kill -9 $(lsof -t -i:3000)
+    ```
+- **Option 2: Run on a different port**:
+  - *Windows (PowerShell)*:
+    ```powershell
+    $env:PORT=3001; npm run dev
+    ```
+  - *macOS / Linux*:
+    ```bash
+    PORT=3001 npm run dev
+    ```
 
-### Combat Tactics
-1. **Bait & Punish**: Watch for NOVA's dash cooldown. When NOVA dashes forward, use your own dash to phase through the attack using i-frames, then turn and strike.
-2. **Control the Center**: When power-ups spawn, contest them early. Denying NOVA a `SHIELD` or `2× ATK` buff is often the difference between victory and defeat.
-3. **Time Your Ultimate**: Save your **Energy Burst (`Space`)** for moments when you are cornered against arena barriers or when NOVA initiates a high-damage combo.
-4. **Watch the Arena**: In Chapters 3 through 5, hazardous laser grids and collapsing platforms can deplete your HP faster than enemy attacks. Keep note of warning indicators before platforms collapse!
+### Error: `[vite] failed to connect to websocket`
+**Cause**: A development WebSocket was intercepted or blocked.  
+**Resolution**: Ensure you are running the latest `server.ts` code, which permits `vite-hmr` WebSocket upgrade requests to pass through cleanly to Vite during development. Note that production builds in `dist/` contain zero HMR code.
 
 ---
 
-## 📸 Screenshots
+## 🔑 Environment Variables
 
-```text
-+-----------------------------------------------------------------------+
-|  [ VEX (PLAYER) ]                 RND 1               [ NOVA (AI) ]  |
-|  HP: |||||||||||| 100/100      SCORE: 2,400       HP: |||||||||| 80   |
-|                                                                       |
-|                          ⚡ [POWER-UP SPAWN]                           |
-|                                                                       |
-|           ( VEX )                                  ( NOVA )           |
-|              \====> [ENERGY BLADE SLASH]              /               |
-|                                                                       |
-|                                                (=== LASER BEAM ===)   |
-|                                                                       |
-|  [JOYSTICK]                                     [BURST] [DASH] [ATK]  |
-+-----------------------------------------------------------------------+
+Create a `.env` file in the root directory if you need to override default settings:
+
+```env
+# Server Port (Default: 3000)
+PORT=3000
+
+# Environment Mode ('development' or 'production')
+NODE_ENV=development
+
+# Optional: Dedicated external WebSocket backend URL (e.g., Cloud Run or Railway)
+# If left empty, automatically uses the current browser origin (ws:// or wss://)
+VITE_MULTIPLAYER_URL=""
+
+# Optional: Google Gemini API Key for extended AI capabilities
+GEMINI_API_KEY=""
+
+# Optional: Public Application URL
+APP_URL="http://localhost:3000"
 ```
 
 ---
 
 ## 🌐 Deployment
 
-Because **MECHA CLASH** builds into standard static HTML/JS/CSS assets, it can be deployed to any static host:
-
-### Deploy to Vercel
-```bash
-npm install -g vercel
-vercel
-```
-
-### Deploy to Netlify
+### 1. Static Web Hosting (Vercel, Netlify, GitHub Pages)
+To host the frontend game client (single player, campaign, and endless modes):
 ```bash
 npm run build
-# Set the publish directory to "dist"
 ```
+- **Build Command**: `npm run build`
+- **Output Directory**: `dist`
+- **Install Command**: `npm install`
 
-### Deploy to GitHub Pages
-```bash
-npm run build
-npx gh-pages -d dist
-```
-
----
-
-## 🤝 Contributing
-
-Contributions, feature suggestions, and bug reports are welcome!
-
-1. Fork the Project.
-2. Create a Feature Branch (`git checkout -b feature/EpicMechaUpgrade`).
-3. Commit your Changes (`git commit -m "Add new plasma rifle weapon type"`).
-4. Push to the Branch (`git push origin feature/EpicMechaUpgrade`).
-5. Open a Pull Request.
+### 2. Full-Stack / Multiplayer Hosting (Cloud Run, Render, Railway, Fly.io)
+To host both the web client and the real-time WebSocket room server:
+- **Build Command**: `npm run build`
+- **Start Command**: `npm run start` (or `node --import tsx server.ts`)
+- **Port**: Bind to `0.0.0.0` using `$PORT` (handled automatically by `server.ts`).
 
 ---
 
-## 📄 License
+## 👨‍💻 Author & License
 
-This project is open-source. Please credit the original author when referencing or utilizing code from this repository.
-
----
-
-## 👨‍💻 Author
-
-**Sarthak Raikwar**  
-GitHub: [@Sarthak-850](https://github.com/Sarthak-850)
+- **Author**: **Sarthak Raikwar**
+- **GitHub**: [@Sarthak-850](https://github.com/Sarthak-850)
+- **License**: Released under the [MIT License](https://opensource.org/licenses/MIT).

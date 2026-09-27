@@ -14,14 +14,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', 1); // Enable proxy trust for Cloud Run, Render, Railway, and Cloudflare HTTPS
 app.use(express.json());
 
-// Permissive CORS and pre-flight handling for mobile browser privacy protections
-app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+// Dynamic CORS allowing deployed Vercel frontend, custom domains, and localhost
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
-  if (_req.method === 'OPTIONS') {
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
   next();
@@ -30,9 +38,30 @@ app.use((_req, res, next) => {
 const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
-// Port configuration (Vite dev server or Cloud Run port 3000)
+// Port configuration (Vite dev server, Cloud Run, Render, or Railway)
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-const isProd = process.env.NODE_ENV === 'production';
+const isProd =
+  process.env.NODE_ENV === 'production' ||
+  (process.env.NODE_ENV !== 'development' &&
+    process.env.npm_lifecycle_event !== 'dev' &&
+    process.env.npm_lifecycle_event !== 'dev:web');
+
+// Heartbeat to keep connections alive across reverse proxies & prune dead sockets
+const heartbeatInterval = setInterval(() => {
+  wss.clients.forEach((ws: any) => {
+    if (ws.isAlive === false) {
+      return ws.terminate();
+    }
+    ws.isAlive = false;
+    try {
+      ws.ping();
+    } catch {}
+  });
+}, 25000);
+
+wss.on('close', () => {
+  clearInterval(heartbeatInterval);
+});
 
 // In-Memory Room Management
 interface PlayerSession {
@@ -240,12 +269,17 @@ setInterval(() => {
 // WebSocket Connection handling
 wss.on('connection', (ws: WebSocket, request?: any) => {
   let currentSession: PlayerSession | null = null;
+  (ws as any).isAlive = true;
+
+  ws.on('pong', () => {
+    (ws as any).isAlive = true;
+  });
 
   // Check if client provided roomCode / playerId / role in connection URL query
   try {
     if (request && request.url) {
       const parsedUrl = new URL(request.url, 'http://localhost');
-      const qRoomCode = parsedUrl.searchParams.get('roomCode')?.toUpperCase();
+      const qRoomCode = (parsedUrl.searchParams.get('roomCode') || parsedUrl.searchParams.get('room'))?.toUpperCase();
       const qPlayerId = parsedUrl.searchParams.get('playerId');
       const qRole = parsedUrl.searchParams.get('role') as 'PLAYER_1' | 'PLAYER_2' | null;
 
@@ -285,7 +319,18 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
 
   ws.on('message', (data: string) => {
     try {
-      const msg: ClientMessage = JSON.parse(data.toString());
+      const rawText = data.toString();
+      const msg: any = JSON.parse(rawText);
+
+      // Handle heartbeat ping
+      if (msg.type === 'PING') {
+        (ws as any).isAlive = true;
+        if (currentSession) currentSession.lastPing = Date.now();
+        try {
+          ws.send(JSON.stringify({ type: 'PONG' }));
+        } catch {}
+        return;
+      }
 
       if (msg.type === 'ATTACH_ROOM') {
         const cleanCode = (msg.roomCode || '').trim().toUpperCase();
@@ -599,21 +644,29 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
   }
 });
 
-// Upgrade handling for WebSocket on /ws, /ws/, or /api/ws path
+// Upgrade handling for WebSocket on /ws, /ws/, or /api/ws path (Multiplayer), while delegating dev HMR to Vite
 server.on('upgrade', (request, socket, head) => {
   try {
     const host = request.headers.host || 'localhost';
     const parsed = new URL(request.url || '', `http://${host}`);
     const pathname = parsed.pathname;
 
+    // MECHA CLASH multiplayer WebSocket endpoint
     if (pathname === '/ws' || pathname === '/ws/' || pathname === '/api/ws') {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
-    } else {
-      // Cleanly destroy unrecognized upgrade requests so connections don't hang
-      socket.destroy();
+      return;
     }
+
+    // In development mode, allow Vite HMR to handle its own WebSocket upgrades ('vite-hmr' / 'vite-ping')
+    const protocol = request.headers['sec-websocket-protocol'];
+    if (!isProd && (protocol === 'vite-hmr' || protocol === 'vite-ping')) {
+      return;
+    }
+
+    // Cleanly destroy unrecognized upgrade requests so connections don't hang
+    socket.destroy();
   } catch (err) {
     console.error('Error handling WebSocket upgrade:', err);
     socket.destroy();
@@ -776,7 +829,10 @@ async function startServer() {
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: { server },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

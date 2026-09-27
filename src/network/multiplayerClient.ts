@@ -134,9 +134,20 @@ export class MultiplayerClient {
           apiBase = `${isSecure ? 'https:' : 'http:'}//${cleanUrl}`;
         }
 
-        // Ensure WebSocket endpoint targets /ws
+        // Clean apiBase: Strip any trailing /ws or /api/ws from apiBase so REST endpoints (/health, /api/...) work
+        apiBase = apiBase.replace(/\/(api\/)?ws\/?$/, '');
+
+        // Clean wsBase: Ensure WebSocket endpoint targets /ws
         if (!wsBase.endsWith('/ws')) {
-          wsBase = `${wsBase}/ws`;
+          const wsProtocol = apiBase.startsWith('https://') ? 'wss://' : 'ws://';
+          const hostOnly = apiBase.replace(/^https?:\/\//, '');
+          wsBase = `${wsProtocol}${hostOnly}/ws`;
+        }
+
+        // On HTTPS pages, ALWAYS enforce wss:// and https:// (never allow mixed content)
+        if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+          wsBase = wsBase.replace(/^ws:\/\//, 'wss://');
+          apiBase = apiBase.replace(/^http:\/\//, 'https://');
         }
 
         return { wsBase, apiBase };
@@ -164,7 +175,10 @@ export class MultiplayerClient {
   public getWebSocketUrl(roomCode?: string, playerId?: string, role?: string): string {
     const { wsBase } = this.getTargetBackend();
     const params = new URLSearchParams();
-    if (roomCode) params.set('roomCode', roomCode);
+    if (roomCode) {
+      params.set('roomCode', roomCode);
+      params.set('room', roomCode);
+    }
     if (playerId) params.set('playerId', playerId);
     if (role) params.set('role', role);
     const queryString = params.toString();
@@ -184,13 +198,14 @@ export class MultiplayerClient {
   /**
    * Diagnostic Health Check:
    * Tests if the backend server is reachable via HTTP REST.
+   * Uses 12-second timeout to accommodate cloud container cold starts.
    */
   public async checkHealth(): Promise<{ ok: boolean; status?: string; latencyMs: number; error?: string }> {
     const { apiBase } = this.getTargetBackend();
     const start = performance.now();
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 6000);
+      const timer = setTimeout(() => controller.abort(), 12000);
       const res = await fetch(`${apiBase}/health`, {
         method: 'GET',
         headers: { Accept: 'application/json' },

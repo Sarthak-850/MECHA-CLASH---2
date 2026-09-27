@@ -47,21 +47,33 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [countdownMsg, setCountdownMsg] = useState<string | null>(null);
   const [showDiag, setShowDiag] = useState<boolean>(false);
-  const [serverStatus, setServerStatus] = useState<{ checked: boolean; ok: boolean; latencyMs?: number }>({
-    checked: false,
-    ok: true,
-  });
+  type ServerDisplayStatus = 'CONNECTING' | 'ONLINE' | 'OFFLINE';
+  const [serverStatus, setServerStatus] = useState<ServerDisplayStatus>('CONNECTING');
+  const [latencyMs, setLatencyMs] = useState<number | undefined>(undefined);
+  const [statusDetail, setStatusDetail] = useState<string | null>(null);
 
   const timeoutTimerRef = useRef<any>(null);
   const roomStateRef = useRef<RoomStateSync | null>(null);
   roomStateRef.current = roomState;
 
-  // Probe server health on mount
-  useEffect(() => {
+  // Probe server health on mount & provide retry mechanism
+  const probeServer = useCallback(() => {
+    setServerStatus('CONNECTING');
+    setStatusDetail(null);
     multiplayerClient.checkHealth().then((res) => {
-      setServerStatus({ checked: true, ok: res.ok, latencyMs: res.latencyMs });
+      if (res.ok) {
+        setServerStatus('ONLINE');
+        setLatencyMs(res.latencyMs);
+      } else {
+        setServerStatus('OFFLINE');
+        setStatusDetail(res.error || 'Server unreachable');
+      }
     });
   }, []);
+
+  useEffect(() => {
+    probeServer();
+  }, [probeServer]);
 
   // Clear timeout timer on unmount
   useEffect(() => {
@@ -84,6 +96,16 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   // Wire multiplayerClient callbacks
   useEffect(() => {
     multiplayerClient.setCallbacks({
+      onConnectionChange: (status) => {
+        if (status === 'CONNECTED') {
+          setServerStatus('ONLINE');
+        } else if (status === 'CONNECTING' || status === 'RECONNECTING') {
+          setServerStatus('CONNECTING');
+        } else if (status === 'DISCONNECTED') {
+          // If disconnected and health check had failed, show offline
+          setServerStatus((prev) => (prev === 'ONLINE' ? 'CONNECTING' : 'OFFLINE'));
+        }
+      },
       onRoomCreated: (code, _role) => {
         if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
         setCreatedRoomCode(code);
@@ -292,24 +314,53 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         {view === 'MENU' && (
           <div className="w-full flex flex-col gap-2.5 sm:gap-3">
             {/* Arena Backend Server Status Probe */}
-            <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-[10px] font-mono-data text-slate-400">
-              <span className="flex items-center gap-1.5">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    serverStatus.ok
-                      ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] animate-pulse'
-                      : 'bg-rose-500'
-                  }`}
-                />
-                ARENA SERVER
-              </span>
-              <span className={serverStatus.ok ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}>
-                {serverStatus.checked
-                  ? serverStatus.ok
-                    ? `ONLINE (${serverStatus.latencyMs ?? 15}ms)`
-                    : 'OFFLINE'
-                  : 'CHECKING...'}
-              </span>
+            <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-800 text-[10px] font-mono-data text-slate-400">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      serverStatus === 'ONLINE'
+                        ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)] animate-pulse'
+                        : serverStatus === 'CONNECTING'
+                        ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)] animate-pulse'
+                        : 'bg-rose-500'
+                    }`}
+                  />
+                  ARENA SERVER
+                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={
+                      serverStatus === 'ONLINE'
+                        ? 'text-emerald-400 font-semibold'
+                        : serverStatus === 'CONNECTING'
+                        ? 'text-amber-400 font-semibold'
+                        : 'text-rose-400 font-semibold'
+                    }
+                  >
+                    {serverStatus === 'ONLINE'
+                      ? `ONLINE (${latencyMs ?? 15}ms)`
+                      : serverStatus === 'CONNECTING'
+                      ? 'CONNECTING...'
+                      : 'SERVER OFFLINE'}
+                  </span>
+                  {serverStatus === 'OFFLINE' && (
+                    <button
+                      type="button"
+                      onClick={probeServer}
+                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-400 text-[9px] cursor-pointer transition-colors"
+                    >
+                      RETRY
+                    </button>
+                  )}
+                </div>
+              </div>
+              {serverStatus === 'OFFLINE' && (
+                <div className="text-[9px] text-slate-500 text-left pt-0.5 border-t border-slate-800/60">
+                  {statusDetail ? `Probe: ${statusDetail}. ` : ''}
+                  Cloud backends may take 15–30s to wake from sleep.
+                </div>
+              )}
             </div>
 
             {/* Player Pilot Name Input */}
