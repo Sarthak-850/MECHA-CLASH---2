@@ -32,7 +32,8 @@ export class GameRenderer {
     particles: Particle[],
     floatingTexts: FloatingText[],
     screenShake: { x: number; y: number },
-    theme: ArenaColorTheme = 'CYAN_MATRIX'
+    theme: ArenaColorTheme = 'CYAN_MATRIX',
+    localMechId: 'VEX' | 'NOVA' = 'VEX'
   ) {
     this.animTime += dt;
     const ctx = this.ctx;
@@ -59,13 +60,15 @@ export class GameRenderer {
     // 6. Draw Particles (under mechs)
     this.drawParticles(particles, false);
 
-    // 7. Draw Mechs (VEX and NOVA)
-    this.drawMech(vex, 'VEX');
-    this.drawMech(nova, 'NOVA');
+    // 7. Draw Mechs (Local perspective: Local is ALWAYS Blue, Remote is ALWAYS Red)
+    this.drawMech(vex, 'VEX', localMechId);
+    this.drawMech(nova, 'NOVA', localMechId);
 
-    // 8. Draw Attacks & Slashing Effects
-    this.drawAttackEffect(vex, '#06b6d4', '#67e8f9');
-    this.drawAttackEffect(nova, '#ef4444', '#fca5a5');
+    // 8. Draw Attacks & Slashing Effects (Local is always Cyan/Blue, Remote is always Crimson/Red)
+    const vexIsLocal = vex.id === localMechId;
+    const novaIsLocal = nova.id === localMechId;
+    this.drawAttackEffect(vex, vexIsLocal ? '#06b6d4' : '#ef4444', vexIsLocal ? '#67e8f9' : '#fca5a5');
+    this.drawAttackEffect(nova, novaIsLocal ? '#06b6d4' : '#ef4444', novaIsLocal ? '#67e8f9' : '#fca5a5');
 
     // 9. Draw Particles (over mechs - sparks, debris)
     this.drawParticles(particles, true);
@@ -444,13 +447,14 @@ export class GameRenderer {
     }
   }
 
-  /** Renders Original Mecha Silhouette for VEX and NOVA */
-  private drawMech(mech: MechState, type: 'VEX' | 'NOVA') {
+  /** Renders Original Mecha Silhouette for VEX and NOVA with local-perspective coloring */
+  private drawMech(mech: MechState, type: 'VEX' | 'NOVA', localMechId: 'VEX' | 'NOVA' = 'VEX') {
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(mech.x, mech.y);
     ctx.rotate(mech.angle);
 
+    const isLocal = mech.id === localMechId;
     const isVex = type === 'VEX';
     const isHit = mech.hitStunTimer > 0;
     const isDefeated = mech.isDefeated;
@@ -483,12 +487,12 @@ export class GameRenderer {
     // Movement leg piston animation
     const legOffset = Math.sin(mech.walkCycle) * 4;
 
-    // Colors
-    const primaryColor = isVex ? '#06b6d4' : '#ef4444';
-    const armorDark = isVex ? '#0f172a' : '#18181b';
-    const armorMid = isVex ? '#1e293b' : '#27272a';
-    const armorPlate = isVex ? '#334155' : '#3f3f46';
-    const glowColor = isVex ? '#22d3ee' : '#f87171';
+    // Colors: Local player is ALWAYS Blue (Cyan), Remote Opponent is ALWAYS Red (Crimson)
+    const primaryColor = isLocal ? '#06b6d4' : '#ef4444';
+    const armorDark = isLocal ? '#0f172a' : '#18181b';
+    const armorMid = isLocal ? '#1e293b' : '#27272a';
+    const armorPlate = isLocal ? '#334155' : '#3f3f46';
+    const glowColor = isLocal ? '#22d3ee' : '#f87171';
 
     // 1. Dash Trails / Ghost Echoes
     if (mech.isDashing) {
@@ -507,7 +511,7 @@ export class GameRenderer {
     if (speed > 20 || mech.isDashing) {
       ctx.save();
       const flameLen = mech.isDashing ? 28 : 12 + Math.random() * 6;
-      ctx.fillStyle = isVex ? '#38bdf8' : '#fb923c';
+      ctx.fillStyle = isLocal ? '#38bdf8' : '#fb923c';
       ctx.shadowBlur = 10;
       ctx.shadowColor = primaryColor;
 
@@ -631,14 +635,14 @@ export class GameRenderer {
       ctx.closePath();
       ctx.fill();
 
-      // NOVA Cyclops Optical Eye / Red Core
+      // NOVA Cyclops Optical Eye / Core (Cyan when Local, Crimson when Opponent)
       const eyeOffset = Math.sin(this.animTime * 3) * 2;
-      ctx.fillStyle = '#450a0a';
+      ctx.fillStyle = isLocal ? '#082f49' : '#450a0a';
       ctx.fillRect(4, -8, 8, 16);
 
-      ctx.fillStyle = '#ef4444';
+      ctx.fillStyle = glowColor;
       ctx.shadowBlur = 10;
-      ctx.shadowColor = '#ef4444';
+      ctx.shadowColor = glowColor;
       ctx.beginPath();
       ctx.arc(8, eyeOffset, 3.5, 0, Math.PI * 2);
       ctx.fill();
@@ -654,10 +658,10 @@ export class GameRenderer {
 
     // 5. Active Power Attack Surging Glow
     if (mech.hasPowerAttack) {
-      ctx.strokeStyle = isVex ? '#a855f7' : '#f97316';
+      ctx.strokeStyle = isLocal ? '#a855f7' : '#f97316';
       ctx.lineWidth = 3;
       ctx.shadowBlur = 15;
-      ctx.shadowColor = isVex ? '#a855f7' : '#f97316';
+      ctx.shadowColor = isLocal ? '#a855f7' : '#f97316';
       ctx.beginPath();
       ctx.arc(0, 0, mech.radius + 4, 0, Math.PI * 2);
       ctx.stroke();

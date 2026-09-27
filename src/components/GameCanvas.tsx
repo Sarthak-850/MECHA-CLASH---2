@@ -282,7 +282,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           engine.particles,
           engine.floatingTexts,
           engine.screenShake,
-          theme
+          theme,
+          engine.getLocalMechId()
         );
       }
 
@@ -528,7 +529,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           {/* Round End Overlay */}
           {gameState === 'ROUND_END' && (
-            <RoundEndOverlay winner={roundWinner} round={engine.currentRound} />
+            <RoundEndOverlay
+              winner={roundWinner}
+              round={engine.currentRound}
+              isWon={engine.isLocalWinner(roundWinner)}
+            />
           )}
 
           {/* Pause Modal (Single player only) */}

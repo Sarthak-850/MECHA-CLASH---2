@@ -211,6 +211,7 @@ export const CenterMatchPanel = React.memo<CenterMatchPanelProps>(function Cente
 interface VexVisorPanelProps {
   displayName: string;
   isMultiplayer: boolean;
+  roleLabel?: string;
   hp: number;
   lives: number;
   dashPct: number;
@@ -223,6 +224,7 @@ interface VexVisorPanelProps {
 const VexVisorPanel = React.memo<VexVisorPanelProps>(function VexVisorPanel({
   displayName,
   isMultiplayer,
+  roleLabel = 'YOU',
   hp,
   lives,
   dashPct,
@@ -301,7 +303,7 @@ const VexVisorPanel = React.memo<VexVisorPanelProps>(function VexVisorPanel({
                 {displayName}
               </span>
               <span className="hidden sm:inline text-[8px] md:text-[9px] text-cyan-400/70 font-mono-data">
-                {isMultiplayer ? 'P1' : 'YOU'}
+                {roleLabel}
               </span>
             </div>
           </div>
@@ -415,6 +417,7 @@ const VexVisorPanel = React.memo<VexVisorPanelProps>(function VexVisorPanel({
 interface NovaVisorPanelProps {
   displayName: string;
   isMultiplayer: boolean;
+  roleLabel?: string;
   isBoss: boolean;
   personalityOrDiff: string;
   hp: number;
@@ -427,6 +430,7 @@ interface NovaVisorPanelProps {
 const NovaVisorPanel = React.memo<NovaVisorPanelProps>(function NovaVisorPanel({
   displayName,
   isMultiplayer,
+  roleLabel = 'FOE',
   isBoss,
   personalityOrDiff,
   hp,
@@ -517,7 +521,7 @@ const NovaVisorPanel = React.memo<NovaVisorPanelProps>(function NovaVisorPanel({
           <div className="flex items-center gap-1.5 min-w-0 justify-end">
             <div className="flex items-center gap-1 min-w-0 justify-end">
               <span className="hidden sm:inline text-[8px] md:text-[9px] text-orange-400/70 font-mono-data">
-                {isMultiplayer ? 'P2' : isBoss ? 'BOSS' : 'AI'}
+                {roleLabel}
               </span>
               <span
                 className={`font-display font-extrabold text-[10px] sm:text-xs md:text-sm tracking-wider truncate uppercase drop-shadow-[0_0_8px_rgba(249,115,22,0.5)] ${
@@ -640,27 +644,26 @@ export const BattleHUD: React.FC<BattleHUDProps> = ({
   onToggleDebug,
   showDebugOverlay = false,
 }) => {
-  const vex = engine.vex;
-  const nova = engine.nova;
+  // Local-relative perspective: Player on this device is ALWAYS localMech (Blue left visor)
+  // Opponent on other device / AI is ALWAYS remoteMech (Red right visor)
+  const isP2Local = engine.isMultiplayer && engine.localRole === 'PLAYER_2';
+  const localMech = isP2Local ? engine.nova : engine.vex;
+  const remoteMech = isP2Local ? engine.vex : engine.nova;
 
-  // Dash Status
-  const dashReady = vex.dashCooldown <= 0;
+  // Dash Status tracks the local player's mech cooldown
+  const dashReady = localMech.dashCooldown <= 0;
   const dashPct = dashReady
     ? 100
-    : Math.max(0, 100 - (vex.dashCooldown / vex.maxDashCooldown) * 100);
+    : Math.max(0, 100 - (localMech.dashCooldown / localMech.maxDashCooldown) * 100);
 
   // Player Names
-  const p1DisplayName = engine.isMultiplayer
-    ? engine.localRole === 'PLAYER_1'
-      ? engine.localPlayerName
-      : engine.remotePlayerName
+  const localDisplayName = engine.isMultiplayer
+    ? engine.localPlayerName || 'YOU'
     : 'VEX';
 
-  const p2DisplayName = engine.isMultiplayer
-    ? engine.localRole === 'PLAYER_2'
-      ? engine.localPlayerName
-      : engine.remotePlayerName
-    : nova.name;
+  const remoteDisplayName = engine.isMultiplayer
+    ? engine.remotePlayerName || 'OPPONENT'
+    : remoteMech.name;
 
   // Mode / Match Label
   const modeLabel = useMemo(() => {
@@ -683,8 +686,8 @@ export const BattleHUD: React.FC<BattleHUDProps> = ({
 
   const opponentSubtitle = useMemo(() => {
     if (engine.isMultiplayer) return 'CONNECTED';
-    return nova.aiPersonality || engine.difficulty;
-  }, [engine.isMultiplayer, nova.aiPersonality, engine.difficulty]);
+    return remoteMech.aiPersonality || engine.difficulty;
+  }, [engine.isMultiplayer, remoteMech.aiPersonality, engine.difficulty]);
 
   return (
     <header
@@ -695,17 +698,18 @@ export const BattleHUD: React.FC<BattleHUDProps> = ({
         paddingRight: 'max(env(safe-area-inset-right, 0px), 8px)',
       }}
     >
-      {/* LEFT: VEX MECHA COMBAT VISOR */}
+      {/* LEFT: LOCAL PLAYER COMBAT VISOR (ALWAYS BLUE) */}
       <VexVisorPanel
-        displayName={p1DisplayName}
+        displayName={localDisplayName}
         isMultiplayer={engine.isMultiplayer}
-        hp={vex.hp}
-        lives={vex.lives}
+        roleLabel="YOU"
+        hp={localMech.hp}
+        lives={localMech.lives}
         dashPct={dashPct}
         dashReady={dashReady}
-        hasShield={vex.hasShield}
-        hasPowerAttack={vex.hasPowerAttack}
-        speedBoostTimer={vex.speedBoostTimer}
+        hasShield={localMech.hasShield}
+        hasPowerAttack={localMech.hasPowerAttack}
+        speedBoostTimer={localMech.speedBoostTimer}
       />
 
       {/* CENTER: SEMI-TRANSPARENT ANGULAR MATCH PANEL (MEMOIZED) */}
@@ -723,17 +727,18 @@ export const BattleHUD: React.FC<BattleHUDProps> = ({
         onPause={onPause}
       />
 
-      {/* RIGHT: NOVA / OPPONENT COMBAT VISOR */}
+      {/* RIGHT: OPPONENT COMBAT VISOR (ALWAYS RED) */}
       <NovaVisorPanel
-        displayName={p2DisplayName}
+        displayName={remoteDisplayName}
         isMultiplayer={engine.isMultiplayer}
-        isBoss={Boolean(nova.isBoss)}
+        roleLabel={engine.isMultiplayer ? 'FOE' : remoteMech.isBoss ? 'BOSS' : 'AI'}
+        isBoss={Boolean(remoteMech.isBoss)}
         personalityOrDiff={opponentSubtitle}
-        hp={nova.hp}
-        lives={nova.lives}
-        hasShield={nova.hasShield}
-        hasPowerAttack={nova.hasPowerAttack}
-        speedBoostTimer={nova.speedBoostTimer}
+        hp={remoteMech.hp}
+        lives={remoteMech.lives}
+        hasShield={remoteMech.hasShield}
+        hasPowerAttack={remoteMech.hasPowerAttack}
+        speedBoostTimer={remoteMech.speedBoostTimer}
       />
     </header>
   );

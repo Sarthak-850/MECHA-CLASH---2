@@ -3,13 +3,15 @@ import React from 'react';
 interface RoundEndOverlayProps {
   winner: 'VEX' | 'NOVA' | null;
   round: number;
+  isWon?: boolean;
 }
 
 export const RoundEndOverlay: React.FC<RoundEndOverlayProps> = ({
   winner,
   round,
+  isWon,
 }) => {
-  const isWon = winner === 'VEX';
+  const won = isWon !== undefined ? isWon : winner === 'VEX';
 
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-30 select-none">
@@ -20,7 +22,7 @@ export const RoundEndOverlay: React.FC<RoundEndOverlayProps> = ({
           ROUND {round} COMPLETE
         </span>
 
-        {isWon ? (
+        {won ? (
           <div className="font-display font-black text-3xl xs:text-4xl sm:text-6xl md:text-7xl text-cyan-400 tracking-wider drop-shadow-[0_0_30px_rgba(6,182,212,0.8)] glow-cyan text-center">
             ROUND WON
           </div>

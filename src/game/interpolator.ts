@@ -127,6 +127,9 @@ export class RemotePlayerInterpolator {
     }
 
     const now = performance.now();
+    // Adapt delay dynamically: minimum 70ms up to 115ms based on measured packet jitter
+    const jitter = this.getJitterMs();
+    this.interpolationDelayMs = Math.max(70, Math.min(115, Math.round(jitter * 2 + 55)));
     const renderTime = now - this.interpolationDelayMs;
 
     // Find two snapshots s0 and s1 such that s0.time <= renderTime <= s1.time
@@ -177,12 +180,13 @@ export class RemotePlayerInterpolator {
       const oldest = this.snapshots[0];
 
       if (renderTime > latest.time) {
-        // Dead-reckon extrapolation up to 100ms
-        const extraSec = Math.min(0.1, (renderTime - latest.time) / 1000);
-        remoteMech.x = latest.x + latest.vx * extraSec;
-        remoteMech.y = latest.y + latest.vy * extraSec;
-        remoteMech.vx = latest.vx;
-        remoteMech.vy = latest.vy;
+        // Dead-reckon extrapolation up to 90ms with smooth damping to avoid overshooting
+        const extraSec = Math.min(0.09, (renderTime - latest.time) / 1000);
+        const damp = Math.max(0.4, 1 - (extraSec / 0.09) * 0.5);
+        remoteMech.x = latest.x + latest.vx * damp * extraSec;
+        remoteMech.y = latest.y + latest.vy * damp * extraSec;
+        remoteMech.vx = latest.vx * damp;
+        remoteMech.vy = latest.vy * damp;
         remoteMech.angle = latest.angle;
         if (Math.hypot(latest.vx, latest.vy) > 10) {
           remoteMech.walkCycle += dt * 14;

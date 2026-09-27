@@ -133,6 +133,32 @@ export class GameEngine {
   public onSendDamage?: (targetRole: 'PLAYER_1' | 'PLAYER_2', damage: number, isCritical: boolean, source: string, newHp: number) => void;
   public onSendCollectPowerUp?: (powerUpId: string, role: 'PLAYER_1' | 'PLAYER_2') => void;
 
+  /**
+   * Identifies which mech entity the local player is controlling.
+   * Player 1 controls VEX. Player 2 controls NOVA.
+   */
+  public getLocalMechId(): 'VEX' | 'NOVA' {
+    if (!this.isMultiplayer) return 'VEX';
+    return this.localRole === 'PLAYER_1' ? 'VEX' : 'NOVA';
+  }
+
+  /**
+   * Determines if a given mech is the local client's character.
+   * Used for local-relative rendering (Local = Blue, Remote = Red).
+   */
+  public isLocalMech(mech: MechState | 'VEX' | 'NOVA'): boolean {
+    const id = typeof mech === 'string' ? mech : mech.id;
+    return id === this.getLocalMechId();
+  }
+
+  /**
+   * Evaluates if the local player won a round or match.
+   */
+  public isLocalWinner(winner: 'VEX' | 'NOVA' | null): boolean {
+    if (!winner) return false;
+    return this.isLocalMech(winner);
+  }
+
   // Callback to inform React UI of state changes
   public onStateChange?: (state: GameState) => void;
 
@@ -364,7 +390,7 @@ export class GameEngine {
     soundManager.playAttack(true);
     this.triggerScreenShake(7);
 
-    const color = remoteMech.id === 'VEX' ? '#38bdf8' : '#f43f5e';
+    const color = '#f43f5e';
     for (let i = 0; i < 28; i++) {
       const angle = (Math.PI * 2 * i) / 28;
       this.particles.push({
@@ -400,7 +426,9 @@ export class GameEngine {
     }
 
     const intDmg = Math.round(damage);
-    const color = targetMech.id === 'VEX' ? '#ef4444' : isCritical ? '#f59e0b' : '#38bdf8';
+    // Local-relative: damage to local player is RED, damage to opponent is CYAN/GOLD
+    const isLocalTarget = this.isLocalMech(targetMech);
+    const color = isLocalTarget ? '#ef4444' : isCritical ? '#f59e0b' : '#38bdf8';
     this.addFloatingText(
       `-${intDmg}${isCritical ? ' CRIT!' : ''}`,
       targetMech.x,
@@ -980,8 +1008,9 @@ export class GameEngine {
         localMech.isAttacking ||
         localMech.speedBoostTimer > 0;
 
-      // When moving/active: send at 25Hz (0.04s). When stationary/idle: throttle to 2Hz (0.5s) heartbeat
-      const targetInterval = isMovingOrActive ? 0.04 : 0.5;
+      // Maintain consistent 22-25Hz snapshot pacing (~45ms) during combat.
+      // This guarantees the remote interpolation buffer never starves when a player temporarily pauses.
+      const targetInterval = 0.045;
 
       if (this.netSyncTimer >= targetInterval) {
         this.netSyncTimer = 0;
@@ -1222,8 +1251,8 @@ export class GameEngine {
     const dist = Math.hypot(opponent.x - mech.x, opponent.y - mech.y);
     const burstRadius = 120;
 
-    // Visual shockwave particles
-    const color = mech.id === 'VEX' ? '#38bdf8' : '#f43f5e';
+    // Visual shockwave particles (Local is Sky Blue, Opponent is Crimson)
+    const color = this.isLocalMech(mech) ? '#38bdf8' : '#f43f5e';
     for (let i = 0; i < 28; i++) {
       const angle = (Math.PI * 2 * i) / 28;
       this.particles.push({
@@ -1305,7 +1334,7 @@ export class GameEngine {
           y: mech.y,
           vx: 0,
           vy: 0,
-          color: mech.id === 'VEX' ? '#06b6d4' : '#ef4444',
+          color: this.isLocalMech(mech) ? '#06b6d4' : '#ef4444',
           size: mech.radius * 0.85,
           alpha: 0.35,
           decay: 2.2,
@@ -1746,7 +1775,8 @@ export class GameEngine {
     mech.hp = Math.max(0, mech.hp - amount);
     const intDamage = Math.round(amount);
 
-    if (mech.id === 'VEX') {
+    // Local-relative: damage to local player is RED, damage to opponent is CYAN/GOLD
+    if (this.isLocalMech(mech)) {
       this.addFloatingText(
         `-${intDamage}`,
         mech.x,
