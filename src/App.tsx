@@ -71,8 +71,8 @@ export default function App() {
     engine.onSendPlayerAttack = (attack) => multiplayerClient.sendPlayerAttack(attack);
     engine.onSendPlayerDash = (dx, dy) => multiplayerClient.sendPlayerDash(dx, dy);
     engine.onSendPlayerUltimate = (x, y) => multiplayerClient.sendPlayerUltimate(x, y);
-    engine.onSendDamage = (role, dmg, crit, src, hp) =>
-      multiplayerClient.sendDamage(role, dmg, crit, src, hp);
+    engine.onSendDamage = (role, dmg, crit, src) =>
+      multiplayerClient.sendDamage(role, dmg, crit, src);
     engine.onSendCollectPowerUp = (id, role) => multiplayerClient.sendCollectPowerUp(id, role);
   }, [engine]);
 
@@ -102,11 +102,21 @@ export default function App() {
       onPowerUpCollected: (powerUpId, collectorRole) => {
         engine.applyRemotePowerUpCollected(powerUpId, collectorRole);
       },
-      onRoundFinished: (round, winner, p1Wins, p2Wins, matchOver) => {
-        engine.applyRemoteRoundFinished(round, winner, p1Wins, p2Wins, matchOver);
+      onRoundFinished: (round, winner, p1Wins, p2Wins, matchOver, winnerId, loserId, roundWinner, matchWinner) => {
+        engine.applyRemoteRoundFinished(round, winner, p1Wins, p2Wins, matchOver, winnerId, loserId, roundWinner, matchWinner);
       },
-      onMatchFinished: (winner, p1Wins, p2Wins) => {
-        engine.applyRemoteMatchFinished(winner, p1Wins, p2Wins);
+      onMatchFinished: (winner, p1Wins, p2Wins, winnerId, loserId, matchWinner) => {
+        engine.applyRemoteMatchFinished(winner, p1Wins, p2Wins, winnerId, loserId, matchWinner);
+      },
+      onGameOver: (data) => {
+        engine.applyRemoteGameOver(
+          data.roomId,
+          data.winnerId,
+          data.loserId,
+          data.p1RoundsWon,
+          data.p2RoundsWon,
+          data.matchWinner
+        );
       },
       onCountdown: (step) => {
         engine.countdownStep = step;
@@ -138,6 +148,12 @@ export default function App() {
         if (engine.isMultiplayer) {
           setOpponentDisconnected(true);
           setDisconnectMessage(msg);
+        }
+      },
+      onOpponentReconnected: () => {
+        if (engine.isMultiplayer) {
+          setOpponentDisconnected(false);
+          engine.addFloatingText('OPPONENT RECONNECTED', 480, 240, '#22c55e', 2.0);
         }
       },
     });

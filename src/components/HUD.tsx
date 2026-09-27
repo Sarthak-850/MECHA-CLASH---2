@@ -27,6 +27,8 @@ export interface CenterMatchPanelProps {
   isFullscreen: boolean;
   showDebugOverlay: boolean;
   isMultiplayer: boolean;
+  rttMs?: number;
+  packetLossPct?: number;
   onToggleMute: () => void;
   onToggleFullscreen?: () => void;
   onToggleDebug?: () => void;
@@ -41,6 +43,8 @@ export const CenterMatchPanel = React.memo<CenterMatchPanelProps>(function Cente
   isFullscreen,
   showDebugOverlay,
   isMultiplayer,
+  rttMs,
+  packetLossPct,
   onToggleMute,
   onToggleFullscreen,
   onToggleDebug,
@@ -177,14 +181,28 @@ export const CenterMatchPanel = React.memo<CenterMatchPanelProps>(function Cente
               </button>
             )}
 
-            {/* Pause Button (Single-player only, disabled in multiplayer) */}
+            {/* Online Ping & Connection Quality Indicator (Requirements 6 & 7) */}
             {isMultiplayer ? (
               <div
-                className="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 rounded-lg bg-slate-900/40 border border-white/5 text-purple-400/70 flex items-center justify-center"
-                title="Online match active (Pause unavailable)"
-                aria-label="Online match"
+                className={`h-5 sm:h-6 md:h-7 px-1 sm:px-1.5 rounded-lg flex items-center gap-0.5 sm:gap-1 border backdrop-blur-sm transition-all select-none ${
+                  (rttMs || 0) < 65 && (packetLossPct || 0) <= 1
+                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400'
+                    : (rttMs || 0) < 130 && (packetLossPct || 0) <= 5
+                    ? 'bg-amber-950/40 border-amber-500/40 text-amber-400'
+                    : 'bg-rose-950/40 border-rose-500/40 text-rose-400'
+                }`}
+                title={`Ping: ${rttMs ?? 0}ms | Packet Loss: ${packetLossPct ?? 0}%`}
+                aria-label={`Ping: ${rttMs ?? 0}ms`}
               >
-                <Wifi className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <Wifi className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
+                <span className="font-mono-data text-[7.5px] sm:text-[9px] font-bold tracking-tight">
+                  {rttMs && rttMs > 0 ? `${rttMs}ms` : '--'}
+                </span>
+                {packetLossPct !== undefined && packetLossPct > 0 && (
+                  <span className="text-[6.5px] sm:text-[7.5px] text-rose-300 font-normal">
+                    {packetLossPct}%
+                  </span>
+                )}
               </div>
             ) : (
               <button
@@ -720,6 +738,8 @@ export const BattleHUD: React.FC<BattleHUDProps> = ({
         isFullscreen={isFullscreen}
         showDebugOverlay={showDebugOverlay}
         isMultiplayer={engine.isMultiplayer}
+        rttMs={engine.metrics.rttMs}
+        packetLossPct={engine.metrics.packetLossPct}
         onToggleMute={onToggleMute}
         onToggleFullscreen={onToggleFullscreen}
         onToggleDebug={onToggleDebug}

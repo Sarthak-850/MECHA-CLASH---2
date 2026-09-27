@@ -194,6 +194,7 @@ export interface DebugPerformanceMetrics {
   avgPacketSizeBytes?: number;
   interpolationBufferCount?: number;
   jitterMs?: number;
+  packetLossPct?: number;
 }
 
 export interface Particle {

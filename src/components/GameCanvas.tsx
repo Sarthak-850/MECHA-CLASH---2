@@ -250,6 +250,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (engine.gameMode === 'MULTIPLAYER') {
         const netTelem = multiplayerClient.getNetworkTelemetry();
         engine.metrics.rttMs = netTelem.rttMs;
+        engine.metrics.packetLossPct = netTelem.packetLossPct;
         engine.metrics.snapshotsPerSec = netTelem.snapshotsPerSec;
         engine.metrics.packetsSentPerSec = netTelem.packetsSentPerSec;
         engine.metrics.packetsReceivedPerSec = netTelem.packetsReceivedPerSec;
@@ -451,6 +452,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 <span className="text-right text-cyan-300 font-mono-data">
                   {engine.metrics.rttMs}ms / {engine.metrics.jitterMs}ms
                 </span>
+                <span>Packet Loss:</span>
+                <span className="text-right text-cyan-300 font-mono-data">
+                  {engine.metrics.packetLossPct || 0}%
+                </span>
                 <span>Snapshots:</span>
                 <span className="text-right text-cyan-300 font-mono-data">
                   {engine.metrics.snapshotsPerSec}/s (buf: {engine.metrics.interpolationBufferCount})
@@ -534,7 +539,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             <RoundEndOverlay
               winner={roundWinner}
               round={engine.currentRound}
-              isWon={engine.isLocalWinner(roundWinner)}
+              isWon={engine.isMultiplayer ? engine.isRoundWon : engine.isLocalWinner(roundWinner)}
             />
           )}
 
@@ -570,7 +575,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           {engine.isMultiplayer && (gameState === 'VICTORY' || gameState === 'DEFEAT' || opponentDisconnected) && (
             <MultiplayerModal
               engine={engine}
-              isVictory={gameState === 'VICTORY'}
+              isVictory={engine.isMatchWon !== undefined ? engine.isMatchWon : (gameState === 'VICTORY')}
               onRematch={onMultiplayerRematch || handleRestart}
               onLeave={onMainMenu}
               opponentDisconnected={opponentDisconnected}

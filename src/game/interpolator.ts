@@ -30,11 +30,17 @@ export interface PlayerSnapshot {
 export class RemotePlayerInterpolator {
   private snapshots: PlayerSnapshot[] = [];
   private maxSnapshots = 25;
-  private interpolationDelayMs = 60; // 60ms delay buffer handles 20-100ms packet jitter
+  private interpolationDelayMs = 90; // Tuned for 20Hz (50ms interval) to ensure 1.8-2 ticks buffer headroom
   private lastReceivedSeq = -1;
   private lastPacketIntervals: number[] = [];
   private lastPacketTime = 0;
   private isInitialized = false;
+
+  // Packet loss detection telemetry
+  private packetsExpected = 0;
+  private packetsReceived = 0;
+  private packetsLost = 0;
+  private lastLossDecayTime = 0;
 
   public reset() {
     this.snapshots = [];
@@ -42,10 +48,36 @@ export class RemotePlayerInterpolator {
     this.lastPacketIntervals = [];
     this.lastPacketTime = 0;
     this.isInitialized = false;
+    this.packetsExpected = 0;
+    this.packetsReceived = 0;
+    this.packetsLost = 0;
+    this.lastLossDecayTime = 0;
   }
 
   public pushSnapshot(input: NetworkPlayerInput, targetMech?: MechState) {
     const now = performance.now();
+
+    // Packet loss tracking based on sequence increments
+    if (this.lastReceivedSeq > 0) {
+      if (input.seq > this.lastReceivedSeq) {
+        const gap = input.seq - this.lastReceivedSeq;
+        this.packetsExpected += gap;
+        this.packetsReceived += 1;
+        if (gap > 1) {
+          this.packetsLost += (gap - 1);
+        }
+      }
+    } else {
+      this.packetsExpected = 1;
+      this.packetsReceived = 1;
+    }
+
+    // Decay loss window every 5 seconds to keep metric responsive
+    if (now - this.lastLossDecayTime > 5000) {
+      this.packetsExpected = Math.round(this.packetsExpected * 0.5);
+      this.packetsLost = Math.round(this.packetsLost * 0.5);
+      this.lastLossDecayTime = now;
+    }
 
     // Track network packet jitter
     if (this.lastPacketTime > 0) {
@@ -127,9 +159,9 @@ export class RemotePlayerInterpolator {
     }
 
     const now = performance.now();
-    // Adapt delay dynamically: minimum 70ms up to 115ms based on measured packet jitter
+    // Adapt delay dynamically: minimum 80ms up to 130ms based on measured packet jitter (tuned for 20Hz / 50ms ticks)
     const jitter = this.getJitterMs();
-    this.interpolationDelayMs = Math.max(70, Math.min(115, Math.round(jitter * 2 + 55)));
+    this.interpolationDelayMs = Math.max(80, Math.min(130, Math.round(jitter * 2 + 75)));
     const renderTime = now - this.interpolationDelayMs;
 
     // Find two snapshots s0 and s1 such that s0.time <= renderTime <= s1.time
@@ -242,5 +274,11 @@ export class RemotePlayerInterpolator {
       this.lastPacketIntervals.reduce((a, b) => a + Math.abs(b - avg), 0) /
       this.lastPacketIntervals.length;
     return Math.round(variance * 10) / 10;
+  }
+
+  public getPacketLossPct(): number {
+    if (this.packetsExpected === 0) return 0;
+    const loss = Math.round((this.packetsLost / this.packetsExpected) * 100);
+    return Math.max(0, Math.min(100, loss));
   }
 }

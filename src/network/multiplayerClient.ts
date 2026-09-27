@@ -5,6 +5,7 @@ import {
   NetworkPlayerInput,
   NetworkAttackEvent,
   NetworkPowerUpSync,
+  NetworkGameOverEvent,
 } from '../types/multiplayer';
 
 export type ConnectionStatus = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
@@ -47,14 +48,23 @@ export interface MultiplayerClientCallbacks {
     winner: 'PLAYER_1' | 'PLAYER_2',
     p1RoundsWon: number,
     p2RoundsWon: number,
-    matchOver: boolean
+    matchOver: boolean,
+    winnerId?: string,
+    loserId?: string,
+    roundWinner?: 'PLAYER_1' | 'PLAYER_2',
+    matchWinner?: 'PLAYER_1' | 'PLAYER_2' | null
   ) => void;
   onMatchFinished?: (
     winner: 'PLAYER_1' | 'PLAYER_2',
     p1RoundsWon: number,
-    p2RoundsWon: number
+    p2RoundsWon: number,
+    winnerId?: string,
+    loserId?: string,
+    matchWinner?: 'PLAYER_1' | 'PLAYER_2'
   ) => void;
+  onGameOver?: (data: NetworkGameOverEvent) => void;
   onOpponentDisconnected?: (message: string) => void;
+  onOpponentReconnected?: (message: string) => void;
   onError?: (message: string) => void;
 }
 
@@ -71,6 +81,7 @@ export class MultiplayerClient {
   private role: 'PLAYER_1' | 'PLAYER_2' | null = null;
   private playerId: string | null = null;
   private roomCode: string | null = null;
+  private gameOverReceived = false;
   private pendingMessages: ClientMessage[] = [];
   private connectPromise: Promise<boolean> | null = null;
   private lastDiagnostic: ConnectionDiagnostic | null = null;
@@ -82,6 +93,11 @@ export class MultiplayerClient {
   private snapshotsRecvSec = 0;
   private bytesSentSec = 0;
   private bytesRecvSec = 0;
+  private lastStateSendTime = 0;
+  private lastRemoteSeq = -1;
+  private lostPacketsWindow = 0;
+  private expectedPacketsWindow = 0;
+  private packetLossPct = 0;
   private netMetrics = {
     packetsSentPerSec: 0,
     packetsReceivedPerSec: 0,
@@ -101,6 +117,17 @@ export class MultiplayerClient {
     this.metricsInterval = setInterval(() => {
       const totalPackets = this.packetsSentSec + this.packetsRecvSec;
       const totalBytes = this.bytesSentSec + this.bytesRecvSec;
+      if (this.expectedPacketsWindow > 0) {
+        this.packetLossPct = Math.max(
+          0,
+          Math.min(100, Math.round((this.lostPacketsWindow / this.expectedPacketsWindow) * 100))
+        );
+      } else {
+        this.packetLossPct = 0;
+      }
+      this.lostPacketsWindow = 0;
+      this.expectedPacketsWindow = 0;
+
       this.netMetrics = {
         packetsSentPerSec: this.packetsSentSec,
         packetsReceivedPerSec: this.packetsRecvSec,
@@ -119,6 +146,7 @@ export class MultiplayerClient {
   public getNetworkTelemetry() {
     return {
       rttMs: this.rttMs,
+      packetLossPct: this.packetLossPct,
       ...this.netMetrics,
     };
   }
@@ -497,20 +525,16 @@ export class MultiplayerClient {
     this.reconnectAttempts++;
     this.updateStatus('RECONNECTING');
 
-    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 5000);
+    const delay = Math.min(800 * Math.pow(1.4, this.reconnectAttempts), 4000);
     this.reconnectTimer = setTimeout(async () => {
       const ok = await this.connect(this.roomCode || undefined, this.playerId || undefined, this.role || undefined);
-      if (ok && this.roomCode && this.pendingPlayerName) {
-        if (this.role === 'PLAYER_1') {
-          this.send({
-            type: 'ATTACH_ROOM',
-            roomCode: this.roomCode,
-            playerId: this.playerId || '',
-            role: 'PLAYER_1',
-          });
-        } else {
-          this.joinRoom(this.roomCode, this.pendingPlayerName);
-        }
+      if (ok && this.roomCode && this.playerId && this.role) {
+        this.send({
+          type: 'ATTACH_ROOM',
+          roomCode: this.roomCode,
+          playerId: this.playerId,
+          role: this.role,
+        });
       }
     }, delay);
   }
@@ -534,6 +558,7 @@ export class MultiplayerClient {
   public async createRoom(playerName: string): Promise<boolean> {
     const validName = playerName.trim() || 'Player 1';
     this.pendingPlayerName = validName;
+    this.gameOverReceived = false;
 
     const OVERALL_TIMEOUT_MS = 15000;
     let timedOut = false;
@@ -658,6 +683,7 @@ export class MultiplayerClient {
     const validName = playerName.trim() || 'Player 2';
     this.pendingRoomCode = cleanCode;
     this.pendingPlayerName = validName;
+    this.gameOverReceived = false;
 
     const OVERALL_TIMEOUT_MS = 15000;
     let timedOut = false;
@@ -815,6 +841,12 @@ export class MultiplayerClient {
   }
 
   public sendPlayerState(state: NetworkPlayerInput) {
+    const now = performance.now();
+    // Strictly cap PLAYER_STATE transmission to 20Hz (~50ms interval, allow 46ms for timer jitter)
+    if (now - this.lastStateSendTime < 46) {
+      return;
+    }
+    this.lastStateSendTime = now;
     this.send({
       type: 'PLAYER_STATE',
       state,
@@ -848,8 +880,7 @@ export class MultiplayerClient {
     targetRole: 'PLAYER_1' | 'PLAYER_2',
     damage: number,
     isCritical: boolean,
-    source: string,
-    newHp: number
+    source: string
   ) {
     this.send({
       type: 'SYNC_DAMAGE',
@@ -857,7 +888,6 @@ export class MultiplayerClient {
       damage,
       isCritical,
       source,
-      newHp,
     });
   }
 
@@ -906,7 +936,7 @@ export class MultiplayerClient {
         this.lastPingTime = performance.now();
         this.sendDirect(this.ws, { type: 'PING' } as any);
       }
-    }, 3000);
+    }, 2000); // 2000ms ping for responsive RTT display
   }
 
   private handleServerMessage(msg: ServerMessage) {
@@ -949,16 +979,33 @@ export class MultiplayerClient {
         break;
 
       case 'START_MATCH':
+        this.gameOverReceived = false;
         if (this.callbacks.onStartMatch) {
           this.callbacks.onStartMatch(msg.round, msg.powerUps);
         }
         break;
 
-      case 'REMOTE_PLAYER_STATE':
+      case 'REMOTE_PLAYER_STATE': {
+        if (msg.state?.seq !== undefined) {
+          if (this.lastRemoteSeq > 0) {
+            const gap = msg.state.seq - this.lastRemoteSeq;
+            if (gap > 0) {
+              this.expectedPacketsWindow += gap;
+              if (gap > 1) {
+                this.lostPacketsWindow += (gap - 1);
+              }
+            }
+          } else {
+            this.expectedPacketsWindow += 1;
+          }
+          this.lastRemoteSeq = msg.state.seq;
+        }
+
         if (this.callbacks.onRemotePlayerState) {
           this.callbacks.onRemotePlayerState(msg.role, msg.state);
         }
         break;
+      }
 
       case 'REMOTE_ATTACK':
         if (this.callbacks.onRemoteAttack) {
@@ -1009,7 +1056,11 @@ export class MultiplayerClient {
             msg.winner,
             msg.p1RoundsWon,
             msg.p2RoundsWon,
-            msg.matchOver
+            msg.matchOver,
+            msg.winnerId,
+            msg.loserId,
+            msg.roundWinner,
+            msg.matchWinner
           );
         }
         break;
@@ -1019,10 +1070,31 @@ export class MultiplayerClient {
           this.callbacks.onMatchFinished(
             msg.winner,
             msg.p1RoundsWon,
-            msg.p2RoundsWon
+            msg.p2RoundsWon,
+            msg.winnerId,
+            msg.loserId,
+            msg.matchWinner
           );
         }
         break;
+
+      case 'GAME_OVER': {
+        if (this.gameOverReceived) {
+          console.warn(`[MultiplayerClient] Duplicate GAME_OVER event ignored for room: ${msg.roomId}`);
+          break;
+        }
+        this.gameOverReceived = true;
+
+        const myPlayerId = this.getPlayerId() || (this.role === 'PLAYER_1' ? 'PLAYER_1' : 'PLAYER_2');
+        console.log(
+          `[Client GAME_OVER] roomId: ${msg.roomId}, playerId: ${myPlayerId}, winnerId: ${msg.winnerId}, loserId: ${msg.loserId}`
+        );
+
+        if (this.callbacks.onGameOver) {
+          this.callbacks.onGameOver(msg);
+        }
+        break;
+      }
 
       case 'OPPONENT_DISCONNECTED':
         if (this.callbacks.onOpponentDisconnected) {
@@ -1030,9 +1102,16 @@ export class MultiplayerClient {
         }
         break;
 
+      case 'OPPONENT_RECONNECTED':
+        if (this.callbacks.onOpponentReconnected) {
+          this.callbacks.onOpponentReconnected(msg.message);
+        }
+        break;
+
       case 'PONG' as any:
         if (this.lastPingTime > 0) {
-          this.rttMs = Math.round(performance.now() - this.lastPingTime);
+          const sample = Math.round(performance.now() - this.lastPingTime);
+          this.rttMs = this.rttMs === 0 ? sample : Math.round(this.rttMs * 0.7 + sample * 0.3);
         }
         break;
 

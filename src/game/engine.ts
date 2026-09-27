@@ -126,6 +126,7 @@ export class GameEngine {
   private netSeq: number = 0;
   public interpolator: RemotePlayerInterpolator = new RemotePlayerInterpolator();
   private lastSentState: { x: number; y: number; vx: number; vy: number; angle: number; isDashing: boolean } | null = null;
+  private lastSentStateTime: number = 0;
   private pendingPowerUpCollects = new Set<string>();
 
   // Multiplayer Event Callbacks
@@ -133,7 +134,7 @@ export class GameEngine {
   public onSendPlayerAttack?: (attack: any) => void;
   public onSendPlayerDash?: (dx: number, dy: number) => void;
   public onSendPlayerUltimate?: (x: number, y: number) => void;
-  public onSendDamage?: (targetRole: 'PLAYER_1' | 'PLAYER_2', damage: number, isCritical: boolean, source: string, newHp: number) => void;
+  public onSendDamage?: (targetRole: 'PLAYER_1' | 'PLAYER_2', damage: number, isCritical: boolean, source: string) => void;
   public onSendCollectPowerUp?: (powerUpId: string, role: 'PLAYER_1' | 'PLAYER_2') => void;
 
   /**
@@ -204,11 +205,24 @@ export class GameEngine {
     return this.isLocalPlayer(mech);
   }
 
+  public isRoundWon: boolean = false;
+  public isMatchWon: boolean = false;
+
   /**
    * Evaluates if the local player won a round or match.
    */
-  public isLocalWinner(winner: 'VEX' | 'NOVA' | null): boolean {
+  public isLocalWinner(winner: 'VEX' | 'NOVA' | 'PLAYER_1' | 'PLAYER_2' | null): boolean {
     if (!winner) return false;
+    if (this.isMultiplayer) {
+      if (this.isRoundWon !== undefined) {
+        return this.isRoundWon;
+      }
+      if (winner === 'PLAYER_1' || winner === 'PLAYER_2') {
+        return this.localRole === winner;
+      }
+      const expectedRole = winner === 'VEX' ? 'PLAYER_1' : 'PLAYER_2';
+      return this.localRole === expectedRole;
+    }
     return this.getLocalPlayer().id === winner;
   }
 
@@ -369,9 +383,12 @@ export class GameEngine {
     this.currentRound = 1;
     this.vexRoundsWon = 0;
     this.novaRoundsWon = 0;
+    this.isRoundWon = false;
+    this.isMatchWon = false;
     this.pendingPowerUpCollects.clear();
     this.interpolator.reset();
     this.lastSentState = null;
+    this.lastSentStateTime = 0;
 
     // Resolve authoritative player IDs without swapping server identities
     const currentRoom = multiplayerClient.getRoomState();
@@ -587,16 +604,26 @@ export class GameEngine {
     winner: 'PLAYER_1' | 'PLAYER_2',
     p1RoundsWon: number,
     p2RoundsWon: number,
-    _matchOver: boolean
+    _matchOver: boolean,
+    winnerId?: string,
+    _loserId?: string,
+    roundWinner?: 'PLAYER_1' | 'PLAYER_2',
+    _matchWinner?: 'PLAYER_1' | 'PLAYER_2' | null
   ) {
     this.gameState = 'ROUND_END';
     this.currentRound = round;
-    this.roundWinner = winner === 'PLAYER_1' ? 'VEX' : 'NOVA';
+    const actualWinnerRole = roundWinner || winner;
+    this.roundWinner = actualWinnerRole === 'PLAYER_1' ? 'VEX' : 'NOVA';
     this.vexRoundsWon = p1RoundsWon;
     this.novaRoundsWon = p2RoundsWon;
     this.roundEndTimer = 3.0;
 
-    const amWinner = winner === this.localRole;
+    const myPlayerId = multiplayerClient.getPlayerId() || this.localPlayerId;
+    const amWinner =
+      (winnerId && myPlayerId ? myPlayerId === winnerId : false) ||
+      (this.localRole === actualWinnerRole);
+    this.isRoundWon = amWinner;
+
     if (amWinner) {
       soundManager.playRoundWon();
       this.matchStats.roundWins++;
@@ -610,19 +637,63 @@ export class GameEngine {
     if (this.onStateChange) this.onStateChange(this.gameState);
   }
 
-  public applyRemoteMatchFinished(
-    winner: 'PLAYER_1' | 'PLAYER_2',
-    p1RoundsWon: number,
-    p2RoundsWon: number
+  public applyRemoteGameOver(
+    roomId: string,
+    winnerId: string,
+    loserId: string,
+    p1RoundsWon?: number,
+    p2RoundsWon?: number,
+    matchWinner?: 'PLAYER_1' | 'PLAYER_2'
   ) {
-    this.vexRoundsWon = p1RoundsWon;
-    this.novaRoundsWon = p2RoundsWon;
-    const amWinner = winner === this.localRole;
-    this.gameState = amWinner ? 'VICTORY' : 'DEFEAT';
-    if (amWinner) {
+    if (p1RoundsWon !== undefined) this.vexRoundsWon = p1RoundsWon;
+    if (p2RoundsWon !== undefined) this.novaRoundsWon = p2RoundsWon;
+
+    const myPlayerId = multiplayerClient.getPlayerId() || this.localPlayerId;
+    const myRole = this.localRole;
+    const isWinner =
+      (winnerId && myPlayerId ? myPlayerId === winnerId : false) ||
+      (matchWinner ? myRole === matchWinner : false) ||
+      (this.vexRoundsWon > this.novaRoundsWon ? myRole === 'PLAYER_1' : myRole === 'PLAYER_2');
+
+    console.log(
+      `[Engine GAME_OVER] roomId: ${roomId}, playerId: ${myPlayerId}, winnerId: ${winnerId}, loserId: ${loserId}, matchWinner: ${matchWinner || 'N/A'} -> Outcome: ${isWinner ? 'WIN' : 'LOSS'}`
+    );
+
+    this.isMatchWon = isWinner;
+    this.gameState = isWinner ? 'VICTORY' : 'DEFEAT';
+    if (isWinner) {
       soundManager.playVictory();
     } else {
       soundManager.playDefeat();
+    }
+
+    if (this.onStateChange) this.onStateChange(this.gameState);
+  }
+
+  public applyRemoteMatchFinished(
+    winner: 'PLAYER_1' | 'PLAYER_2',
+    p1RoundsWon: number,
+    p2RoundsWon: number,
+    winnerId?: string,
+    _loserId?: string,
+    matchWinner?: 'PLAYER_1' | 'PLAYER_2'
+  ) {
+    this.vexRoundsWon = p1RoundsWon;
+    this.novaRoundsWon = p2RoundsWon;
+    const actualWinnerRole = matchWinner || winner;
+    const myPlayerId = multiplayerClient.getPlayerId() || this.localPlayerId;
+    const isWinner =
+      (winnerId && myPlayerId ? myPlayerId === winnerId : false) ||
+      (this.localRole === actualWinnerRole);
+
+    this.isMatchWon = isWinner;
+    if (this.gameState !== 'VICTORY' && this.gameState !== 'DEFEAT') {
+      this.gameState = isWinner ? 'VICTORY' : 'DEFEAT';
+      if (isWinner) {
+        soundManager.playVictory();
+      } else {
+        soundManager.playDefeat();
+      }
     }
     if (this.onStateChange) this.onStateChange(this.gameState);
   }
@@ -1003,6 +1074,7 @@ export class GameEngine {
     this.metrics.isMultiplayer = this.isMultiplayer;
     this.metrics.interpolationBufferCount = this.interpolator.getBufferSize();
     this.metrics.jitterMs = this.interpolator.getJitterMs();
+    this.metrics.packetLossPct = this.interpolator.getPacketLossPct();
 
     // Update particles & floating texts
     this.updateParticles(dt);
@@ -1053,6 +1125,10 @@ export class GameEngine {
   }
 
   private updateRoundEnd(dt: number) {
+    // In multiplayer, round progression and victory/defeat are strictly server-authoritative.
+    // Clients must never determine victory or advance rounds locally!
+    if (this.isMultiplayer) return;
+
     this.roundEndTimer -= dt;
     if (this.roundEndTimer <= 0) {
       if (this.vex.lives <= 0) {
@@ -1087,37 +1163,62 @@ export class GameEngine {
       const localMech = this.getLocalPlayer();
       this.processPlayerInputForMech(localMech, dt);
 
-      // Periodically sync local mech state to opponent via WebSocket (~20-25Hz / 40-50ms)
+      // Strictly limit PLAYER_STATE transmission to 20Hz (50ms interval)
       this.netSyncTimer += dt;
-      const isMovingOrActive =
-        Math.hypot(localMech.vx, localMech.vy) > 1 ||
-        localMech.isDashing ||
-        localMech.isAttacking ||
-        localMech.speedBoostTimer > 0;
-
-      // Maintain consistent 22-25Hz snapshot pacing (~45ms) during combat.
-      // This guarantees the remote interpolation buffer never starves when a player temporarily pauses.
-      const targetInterval = 0.045;
+      const targetInterval = 0.050; // Exactly 20Hz
 
       if (this.netSyncTimer >= targetInterval) {
         this.netSyncTimer = 0;
-        this.netSeq++;
-        if (this.onSendPlayerState) {
-          const newState = {
-            seq: this.netSeq,
-            x: Math.round(localMech.x * 10) / 10,
-            y: Math.round(localMech.y * 10) / 10,
-            vx: Math.round(localMech.vx),
-            vy: Math.round(localMech.vy),
-            angle: Math.round(localMech.angle * 100) / 100,
-            walkCycle: Math.round(localMech.walkCycle * 10) / 10,
-            isDashing: localMech.isDashing,
-            dashDirX: Math.round(localMech.dashDirX * 100) / 100,
-            dashDirY: Math.round(localMech.dashDirY * 100) / 100,
-            time: Date.now(),
-          };
-          this.lastSentState = newState;
-          this.onSendPlayerState(newState);
+
+        const isStationary =
+          Math.hypot(localMech.vx, localMech.vy) < 1 &&
+          !localMech.isDashing &&
+          !localMech.isAttacking &&
+          localMech.speedBoostTimer <= 0;
+
+        const now = Date.now();
+        // Drop unchanged movement packets (Requirement 3), allowing periodic 500ms keepalive
+        const isUnchangedMovement =
+          this.lastSentState &&
+          isStationary &&
+          Math.abs(localMech.x - this.lastSentState.x) < 0.2 &&
+          Math.abs(localMech.y - this.lastSentState.y) < 0.2 &&
+          Math.abs(localMech.vx - this.lastSentState.vx) < 1 &&
+          Math.abs(localMech.vy - this.lastSentState.vy) < 1 &&
+          Math.abs(localMech.angle - this.lastSentState.angle) < 0.02 &&
+          localMech.isDashing === this.lastSentState.isDashing;
+
+        if (isUnchangedMovement && (now - this.lastSentStateTime < 500)) {
+          // Drop unchanged packet to reduce bandwidth flooding by > 50%
+        } else {
+          this.netSeq++;
+          if (this.onSendPlayerState) {
+            const newState: any = {
+              seq: this.netSeq,
+              x: Math.round(localMech.x * 10) / 10,
+              y: Math.round(localMech.y * 10) / 10,
+              vx: Math.round(localMech.vx),
+              vy: Math.round(localMech.vy),
+              angle: Math.round(localMech.angle * 100) / 100,
+              walkCycle: Math.round(localMech.walkCycle * 10) / 10,
+              isDashing: localMech.isDashing,
+              time: now,
+            };
+            if (localMech.isDashing) {
+              newState.dashDirX = Math.round(localMech.dashDirX * 100) / 100;
+              newState.dashDirY = Math.round(localMech.dashDirY * 100) / 100;
+            }
+            this.lastSentState = {
+              x: localMech.x,
+              y: localMech.y,
+              vx: localMech.vx,
+              vy: localMech.vy,
+              angle: localMech.angle,
+              isDashing: localMech.isDashing,
+            };
+            this.lastSentStateTime = now;
+            this.onSendPlayerState(newState);
+          }
         }
       }
     } else {
@@ -1365,8 +1466,7 @@ export class GameEngine {
       if (this.isMultiplayer) {
         if (this.isLocalPlayer(mech) && this.onSendDamage) {
           const targetRole = this.localRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
-          const newHp = Math.max(0, opponent.hp - dmg);
-          this.onSendDamage(targetRole, dmg, true, 'BURST', newHp);
+          this.onSendDamage(targetRole, dmg, true, 'BURST');
         }
       } else {
         this.applyDamage(opponent, dmg, true, mech.id);
@@ -1785,9 +1885,8 @@ export class GameEngine {
 
       if (this.isMultiplayer) {
         const targetRole = this.localRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
-        const newHp = Math.max(0, defender.hp - damage);
         if (this.onSendDamage) {
-          this.onSendDamage(targetRole, damage, isCritical, attacker.id, newHp);
+          this.onSendDamage(targetRole, damage, isCritical, attacker.id);
         }
       } else {
         // Apply damage locally in single player
@@ -1947,7 +2046,7 @@ export class GameEngine {
     this.shakeIntensity = Math.min(18, this.shakeIntensity + intensity);
   }
 
-  private addFloatingText(
+  public addFloatingText(
     text: string,
     x: number,
     y: number,

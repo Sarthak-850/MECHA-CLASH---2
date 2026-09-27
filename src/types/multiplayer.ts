@@ -10,9 +10,9 @@ export interface NetworkPlayerInput {
   vy: number;
   angle: number;
   walkCycle: number;
-  isDashing: boolean;
-  dashDirX: number;
-  dashDirY: number;
+  isDashing?: boolean;
+  dashDirX?: number;
+  dashDirY?: number;
   time?: number; // client send timestamp in ms
   serverTime?: number; // authoritative server timestamp in ms
 }
@@ -98,7 +98,6 @@ export type ClientMessage =
       damage: number;
       isCritical: boolean;
       source: string;
-      newHp: number;
     }
   | {
       type: 'COLLECT_POWERUP';
@@ -175,6 +174,10 @@ export type ServerMessage =
       type: 'ROUND_FINISHED';
       round: number;
       winner: 'PLAYER_1' | 'PLAYER_2';
+      winnerId?: string;
+      loserId?: string;
+      roundWinner?: 'PLAYER_1' | 'PLAYER_2';
+      matchWinner?: 'PLAYER_1' | 'PLAYER_2' | null;
       p1RoundsWon: number;
       p2RoundsWon: number;
       matchOver: boolean;
@@ -182,8 +185,22 @@ export type ServerMessage =
   | {
       type: 'MATCH_FINISHED';
       winner: 'PLAYER_1' | 'PLAYER_2';
+      winnerId?: string;
+      loserId?: string;
+      matchWinner?: 'PLAYER_1' | 'PLAYER_2';
       p1RoundsWon: number;
       p2RoundsWon: number;
+    }
+  | {
+      type: 'GAME_OVER';
+      roomId: string;
+      winnerId: string;
+      loserId: string;
+      roundWinner?: 'PLAYER_1' | 'PLAYER_2';
+      matchWinner?: 'PLAYER_1' | 'PLAYER_2';
+      gameState: 'GAME_OVER';
+      p1RoundsWon?: number;
+      p2RoundsWon?: number;
     }
   | {
       type: 'OPPONENT_DISCONNECTED';
@@ -197,3 +214,15 @@ export type ServerMessage =
       type: 'ERROR';
       message: string;
     };
+
+export interface NetworkGameOverEvent {
+  type: 'GAME_OVER';
+  roomId: string;
+  winnerId: string;
+  loserId: string;
+  roundWinner?: 'PLAYER_1' | 'PLAYER_2';
+  matchWinner?: 'PLAYER_1' | 'PLAYER_2';
+  gameState: 'GAME_OVER';
+  p1RoundsWon?: number;
+  p2RoundsWon?: number;
+}

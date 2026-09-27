@@ -30,7 +30,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({
     onRematch();
   };
 
-  const isLocalVex = engine.isLocalPlayer(engine.vex);
+  const isLocalVex = engine.localRole === 'PLAYER_1' || engine.isLocalPlayer(engine.vex);
   const myRoundsWon = isLocalVex ? engine.vexRoundsWon : engine.novaRoundsWon;
   const oppRoundsWon = isLocalVex ? engine.novaRoundsWon : engine.vexRoundsWon;
 

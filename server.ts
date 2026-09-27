@@ -74,6 +74,10 @@ interface PlayerSession {
   latestState?: any;
   latestStateTime?: number;
   lastBroadcastTime?: number;
+  hasNewState?: boolean;
+  lastReceivedStateTime?: number;
+  disconnectedAt?: number;
+  disconnectTimer?: NodeJS.Timeout | null;
 }
 
 interface RoomData {
@@ -96,6 +100,8 @@ interface RoomData {
   createdAt: number;
   lastActivity: number;
   lastSimTime?: number;
+  roundFinishedEmitted?: boolean;
+  gameOverEmitted?: boolean;
 }
 
 const rooms = new Map<string, RoomData>();
@@ -187,6 +193,8 @@ function startMatchCountdown(room: RoomData) {
       room.p2Hp = 100;
       room.p1Rematch = false;
       room.p2Rematch = false;
+      room.roundFinishedEmitted = false;
+      room.gameOverEmitted = false;
 
       // Initial power-up
       const initialPowerUps: NetworkPowerUpSync[] = [
@@ -252,6 +260,8 @@ function cleanupRoom(roomCode: string) {
   if (room.countdownTimer) clearInterval(room.countdownTimer);
   if (room.roundEndTimer) clearTimeout(room.roundEndTimer);
   if (room.powerUpInterval) clearInterval(room.powerUpInterval);
+  if (room.players.PLAYER_1?.disconnectTimer) clearTimeout(room.players.PLAYER_1.disconnectTimer);
+  if (room.players.PLAYER_2?.disconnectTimer) clearTimeout(room.players.PLAYER_2.disconnectTimer);
 
   rooms.delete(roomCode);
 }
@@ -340,29 +350,71 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
         const cleanCode = (msg.roomCode || '').trim().toUpperCase();
         const room = rooms.get(cleanCode);
         if (room) {
+          let session: PlayerSession | undefined;
           if (msg.role === 'PLAYER_1' && room.players.PLAYER_1) {
-            room.players.PLAYER_1.ws = ws;
-            currentSession = room.players.PLAYER_1;
-            sendTo(ws, {
-              type: 'ROOM_CREATED',
-              roomCode: cleanCode,
-              playerRole: 'PLAYER_1',
-              playerId: room.players.PLAYER_1.id,
-            });
-            sendTo(ws, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
+            session = room.players.PLAYER_1;
           } else if (msg.role === 'PLAYER_2' && room.players.PLAYER_2) {
-            room.players.PLAYER_2.ws = ws;
-            currentSession = room.players.PLAYER_2;
-            sendTo(ws, {
-              type: 'ROOM_JOINED',
-              roomCode: cleanCode,
-              playerRole: 'PLAYER_2',
-              playerId: room.players.PLAYER_2.id,
-            });
-            broadcastToRoom(room, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
-            if (room.players.PLAYER_1?.ws && room.players.PLAYER_2?.ws && room.status === 'LOBBY') {
+            session = room.players.PLAYER_2;
+          }
+
+          if (session) {
+            // Cancel disconnect grace period if reconnecting within grace window
+            if (session.disconnectTimer) {
+              clearTimeout(session.disconnectTimer);
+              session.disconnectTimer = null;
+            }
+            session.ws = ws;
+            session.disconnectedAt = undefined;
+            session.lastPing = Date.now();
+            currentSession = session;
+            (ws as any).isAlive = true;
+
+            if (session.role === 'PLAYER_1') {
+              sendTo(ws, {
+                type: 'ROOM_CREATED',
+                roomCode: cleanCode,
+                playerRole: 'PLAYER_1',
+                playerId: session.id,
+              });
+            } else {
+              sendTo(ws, {
+                type: 'ROOM_JOINED',
+                roomCode: cleanCode,
+                playerRole: 'PLAYER_2',
+                playerId: session.id,
+              });
+            }
+
+            // Resynchronize room state
+            sendTo(ws, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
+
+            if (room.status === 'BATTLE') {
+              // Resynchronize authoritative combat state (Requirement 8)
+              sendTo(ws, {
+                type: 'DAMAGE_APPLIED',
+                targetRole: 'PLAYER_1',
+                damage: 0,
+                isCritical: false,
+                source: 'RECONNECT_SYNC',
+                newHp: room.p1Hp,
+              });
+              sendTo(ws, {
+                type: 'DAMAGE_APPLIED',
+                targetRole: 'PLAYER_2',
+                damage: 0,
+                isCritical: false,
+                source: 'RECONNECT_SYNC',
+                newHp: room.p2Hp,
+              });
+              broadcastToRoom(room, {
+                type: 'OPPONENT_RECONNECTED',
+                message: `${session.name} has reconnected to the match.`,
+              });
+            } else if (room.status === 'LOBBY' && room.players.PLAYER_1?.ws && room.players.PLAYER_2?.ws) {
               setTimeout(() => startMatchCountdown(room), 1200);
             }
+
+            broadcastToRoom(room, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
           }
         }
       } else if (msg.type === 'CREATE_ROOM') {
@@ -460,23 +512,31 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
         if (!room || room.status !== 'BATTLE') return;
 
         const serverNow = Date.now();
+        // Server-side state throttling: Discard packets exceeding ~28Hz from client
+        if (currentSession.lastReceivedStateTime && (serverNow - currentSession.lastReceivedStateTime < 35)) {
+          return;
+        }
+        currentSession.lastReceivedStateTime = serverNow;
+
+        // Authoritative timestamping & compact state buffering
         const stateWithTimestamp = {
-          ...msg.state,
+          seq: msg.state.seq,
+          x: msg.state.x,
+          y: msg.state.y,
+          vx: msg.state.vx,
+          vy: msg.state.vy,
+          angle: msg.state.angle,
+          walkCycle: msg.state.walkCycle,
+          isDashing: Boolean(msg.state.isDashing),
+          dashDirX: msg.state.dashDirX,
+          dashDirY: msg.state.dashDirY,
+          time: msg.state.time,
           serverTime: serverNow,
         };
         currentSession.latestState = stateWithTimestamp;
         currentSession.latestStateTime = serverNow;
-
-        // Relay position state to opponent with authoritative timestamp
-        broadcastToRoom(
-          room,
-          {
-            type: 'REMOTE_PLAYER_STATE',
-            role: currentSession.role,
-            state: stateWithTimestamp,
-          },
-          ws
-        );
+        currentSession.hasNewState = true;
+        // Note: Broadcast is handled at the fixed 20Hz tick rate in serverSimulationLoop
       } else if (msg.type === 'PLAYER_ATTACK') {
         if (!currentSession) return;
         const room = rooms.get(currentSession.roomCode);
@@ -523,40 +583,85 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
       } else if (msg.type === 'SYNC_DAMAGE') {
         if (!currentSession) return;
         const room = rooms.get(currentSession.roomCode);
+
+        // Requirement 9: Add roundFinished guard
         if (!room || room.status !== 'BATTLE') return;
 
-        if (msg.targetRole === 'PLAYER_1') {
-          room.p1Hp = Math.max(0, msg.newHp);
-        } else {
-          room.p2Hp = Math.max(0, msg.newHp);
+        // Validate roles: Attacker must target opponent
+        const attackerRole = currentSession.role;
+        const targetRole = msg.targetRole;
+        if (targetRole !== (attackerRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1')) {
+          return;
         }
 
-        // Broadcast damage to both players
+        // Requirement 4: Server stores authoritative HP values
+        const hpBefore = targetRole === 'PLAYER_1' ? room.p1Hp : room.p2Hp;
+
+        // Requirement 8: Ignore duplicate kill events
+        if (hpBefore <= 0) return;
+
+        // Requirement 5: Server calculates damage (never trust client newHp)
+        const damage = Math.max(0, Math.round(Number(msg.damage) || 0));
+        const hpAfter = Math.max(0, hpBefore - damage);
+
+        // Store authoritative HP
+        if (targetRole === 'PLAYER_1') {
+          room.p1Hp = hpAfter;
+        } else {
+          room.p2Hp = hpAfter;
+        }
+
+        // Requirement 6: Server determines round winner
+        const isKill = hpAfter <= 0;
+        const roundWinner = isKill ? (targetRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1') : null;
+
+        // Requirement 10: Event logs (roomCode, attackerRole, targetRole, damage, HP before, HP after, winner)
+        console.log(
+          `[Damage Event] roomCode: ${room.code} | attackerRole: ${attackerRole} | targetRole: ${targetRole} | damage: ${damage} | HP before: ${hpBefore} | HP after: ${hpAfter} | winner: ${roundWinner || 'NONE'}`
+        );
+
+        // Broadcast authoritative damage and server-calculated newHp
         broadcastToRoom(room, {
           type: 'DAMAGE_APPLIED',
-          targetRole: msg.targetRole,
-          damage: msg.damage,
-          isCritical: msg.isCritical,
-          source: msg.source,
-          newHp: msg.newHp,
+          targetRole,
+          damage,
+          isCritical: Boolean(msg.isCritical),
+          source: msg.source || 'MELEE',
+          newHp: hpAfter,
         });
 
-        // Check if someone was defeated
-        if (msg.newHp <= 0 && room.status === 'BATTLE') {
+        // Handle round completion if player was defeated
+        if (isKill && roundWinner && room.status === 'BATTLE') {
+          // Requirement 11: Prevent multiple ROUND_FINISHED broadcasts
+          if (room.roundFinishedEmitted) return;
+          room.roundFinishedEmitted = true;
           room.status = 'ROUND_END';
-          const roundWinner = msg.targetRole === 'PLAYER_1' ? 'PLAYER_2' : 'PLAYER_1';
+
           if (roundWinner === 'PLAYER_1') {
             room.p1RoundsWon++;
           } else {
             room.p2RoundsWon++;
           }
 
+          // Requirement 7: Server determines match winner
           const matchOver = room.p1RoundsWon >= 2 || room.p2RoundsWon >= 2;
+          const isP1RoundWinner = roundWinner === 'PLAYER_1';
+          const p1Id = room.players.PLAYER_1?.id || 'PLAYER_1';
+          const p2Id = room.players.PLAYER_2?.id || 'PLAYER_2';
+          const roundWinnerId = isP1RoundWinner ? p1Id : p2Id;
+          const roundLoserId = isP1RoundWinner ? p2Id : p1Id;
+          const matchWinner = matchOver ? (room.p1RoundsWon >= 2 ? 'PLAYER_1' : 'PLAYER_2') : null;
+          const matchWinnerId = matchOver ? (matchWinner === 'PLAYER_1' ? p1Id : p2Id) : undefined;
+          const matchLoserId = matchOver ? (matchWinner === 'PLAYER_1' ? p2Id : p1Id) : undefined;
 
           broadcastToRoom(room, {
             type: 'ROUND_FINISHED',
             round: room.currentRound,
             winner: roundWinner,
+            roundWinner,
+            winnerId: roundWinnerId,
+            loserId: roundLoserId,
+            matchWinner,
             p1RoundsWon: room.p1RoundsWon,
             p2RoundsWon: room.p2RoundsWon,
             matchOver,
@@ -564,13 +669,39 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
 
           if (matchOver) {
             room.status = 'MATCH_OVER';
-            broadcastToRoom(room, {
-              type: 'MATCH_FINISHED',
-              winner: room.p1RoundsWon >= 2 ? 'PLAYER_1' : 'PLAYER_2',
-              p1RoundsWon: room.p1RoundsWon,
-              p2RoundsWon: room.p2RoundsWon,
-            });
-            broadcastToRoom(room, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
+
+            // Requirement 12: Prevent multiple MATCH_FINISHED / GAME_OVER broadcasts
+            if (!room.gameOverEmitted) {
+              room.gameOverEmitted = true;
+
+              console.log(
+                `[Server MATCH_OVER] roomCode: ${room.code} | winnerId: ${matchWinnerId} | loserId: ${matchLoserId} | roundWinner: ${roundWinner} | matchWinner: ${matchWinner} | P1 (${p1Id}): ${room.p1RoundsWon} | P2 (${p2Id}): ${room.p2RoundsWon}`
+              );
+
+              broadcastToRoom(room, {
+                type: 'GAME_OVER',
+                roomId: room.code,
+                winnerId: matchWinnerId || roundWinnerId,
+                loserId: matchLoserId || roundLoserId,
+                roundWinner,
+                matchWinner: matchWinner!,
+                gameState: 'GAME_OVER',
+                p1RoundsWon: room.p1RoundsWon,
+                p2RoundsWon: room.p2RoundsWon,
+              });
+
+              broadcastToRoom(room, {
+                type: 'MATCH_FINISHED',
+                winner: matchWinner!,
+                matchWinner: matchWinner!,
+                winnerId: matchWinnerId || roundWinnerId,
+                loserId: matchLoserId || roundLoserId,
+                p1RoundsWon: room.p1RoundsWon,
+                p2RoundsWon: room.p2RoundsWon,
+              });
+
+              broadcastToRoom(room, { type: 'ROOM_STATE', room: getRoomStateSync(room) });
+            }
           } else {
             // Next round after brief delay
             room.roundEndTimer = setTimeout(() => {
@@ -609,11 +740,13 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
           room.p2RoundsWon = 0;
           room.p1Rematch = false;
           room.p2Rematch = false;
+          room.roundFinishedEmitted = false;
+          room.gameOverEmitted = false;
           startMatchCountdown(room);
         }
       } else if (msg.type === 'LEAVE_ROOM') {
         if (currentSession) {
-          handlePlayerDisconnect(currentSession);
+          handlePlayerExplicitLeave(currentSession);
           currentSession = null;
         }
       }
@@ -624,14 +757,58 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
 
   ws.on('close', () => {
     if (currentSession) {
-      handlePlayerDisconnect(currentSession);
+      handleSocketClose(currentSession);
       currentSession = null;
     }
   });
 
-  function handlePlayerDisconnect(session: PlayerSession) {
+  function handleSocketClose(session: PlayerSession) {
     const room = rooms.get(session.roomCode);
     if (!room) return;
+
+    session.ws = null;
+    session.disconnectedAt = Date.now();
+
+    // Broadcast room state showing player temporarily disconnected
+    broadcastToRoom(room, {
+      type: 'ROOM_STATE',
+      room: getRoomStateSync(room),
+    });
+
+    // 15-second grace period for reconnection recovery (Requirement 8)
+    if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
+    session.disconnectTimer = setTimeout(() => {
+      // Grace period expired without reconnection
+      if (session.role === 'PLAYER_1') {
+        delete room.players.PLAYER_1;
+      } else {
+        delete room.players.PLAYER_2;
+      }
+
+      broadcastToRoom(room, {
+        type: 'OPPONENT_DISCONNECTED',
+        message: `${session.name} disconnected from the room.`,
+      });
+
+      broadcastToRoom(room, {
+        type: 'ROOM_STATE',
+        room: getRoomStateSync(room),
+      });
+
+      if (!room.players.PLAYER_1 && !room.players.PLAYER_2) {
+        cleanupRoom(room.code);
+      }
+    }, 15000);
+  }
+
+  function handlePlayerExplicitLeave(session: PlayerSession) {
+    const room = rooms.get(session.roomCode);
+    if (!room) return;
+
+    if (session.disconnectTimer) {
+      clearTimeout(session.disconnectTimer);
+      session.disconnectTimer = null;
+    }
 
     if (session.role === 'PLAYER_1') {
       delete room.players.PLAYER_1;
@@ -649,7 +826,6 @@ wss.on('connection', (ws: WebSocket, request?: any) => {
       room: getRoomStateSync(room),
     });
 
-    // If both players left, clean up immediately
     if (!room.players.PLAYER_1 && !room.players.PLAYER_2) {
       cleanupRoom(room.code);
     }
@@ -715,6 +891,8 @@ app.post('/api/multiplayer/room/create', (req, res) => {
       p2Hp: 100,
       p1Rematch: false,
       p2Rematch: false,
+      roundFinishedEmitted: false,
+      gameOverEmitted: false,
       createdAt: Date.now(),
       lastActivity: Date.now(),
     };
@@ -823,82 +1001,65 @@ app.post('/api/multiplayer/room/leave', (req, res) => {
   res.json({ success: true });
 });
 
-// Authoritative Server Simulation Loop (30 ticks/second) using delta time
-let lastServerTick = performance.now();
+// Authoritative Fixed-Rate Simulation & Snapshot Broadcast Loop (20Hz / 50ms)
+const SERVER_TICK_RATE = 20; // Exactly 20Hz (Requirements 2 & 5)
+const SERVER_TICK_INTERVAL_MS = 1000 / SERVER_TICK_RATE; // 50ms
 let serverTickDurationMs = 0;
 
 const serverSimulationLoop = setInterval(() => {
-  const now = performance.now();
-  const rawDt = (now - lastServerTick) / 1000;
-  lastServerTick = now;
-
-  // Clamp delta time between 1ms (1000fps) and 100ms (10fps) to eliminate accumulated spikes
-  const dt = Math.max(0.001, Math.min(0.1, rawDt));
+  const wallNow = Date.now();
   const tickStart = performance.now();
 
   for (const [_code, room] of rooms.entries()) {
     if (room.status !== 'BATTLE') continue;
 
-    const wallNow = Date.now();
     const p1 = room.players.PLAYER_1;
     const p2 = room.players.PLAYER_2;
 
-    // Idle keepalive pacer: If a player is stationary and hasn't transmitted state in > 400ms,
-    // re-broadcast their latest state so opponent interpolation buffer never starves
-    if (
-      p1 &&
-      p1.latestState &&
-      p1.latestStateTime &&
-      wallNow - p1.latestStateTime > 400 &&
-      wallNow - (p1.lastBroadcastTime || 0) > 400
-    ) {
-      p1.lastBroadcastTime = wallNow;
-      broadcastToRoom(
-        room,
-        {
+    // Fixed-rate snapshot broadcast for Player 1 -> Player 2
+    if (p1 && p1.latestState && p2 && p2.ws && p2.ws.readyState === WebSocket.OPEN) {
+      const needsBroadcast = p1.hasNewState || (wallNow - (p1.lastBroadcastTime || 0) >= 500);
+      if (needsBroadcast) {
+        p1.hasNewState = false;
+        p1.lastBroadcastTime = wallNow;
+        sendTo(p2.ws, {
           type: 'REMOTE_PLAYER_STATE',
           role: 'PLAYER_1',
           state: {
             ...p1.latestState,
             serverTime: wallNow,
           },
-        },
-        p1.ws
-      );
+        });
+      }
     }
 
-    if (
-      p2 &&
-      p2.latestState &&
-      p2.latestStateTime &&
-      wallNow - p2.latestStateTime > 400 &&
-      wallNow - (p2.lastBroadcastTime || 0) > 400
-    ) {
-      p2.lastBroadcastTime = wallNow;
-      broadcastToRoom(
-        room,
-        {
+    // Fixed-rate snapshot broadcast for Player 2 -> Player 1
+    if (p2 && p2.latestState && p1 && p1.ws && p1.ws.readyState === WebSocket.OPEN) {
+      const needsBroadcast = p2.hasNewState || (wallNow - (p2.lastBroadcastTime || 0) >= 500);
+      if (needsBroadcast) {
+        p2.hasNewState = false;
+        p2.lastBroadcastTime = wallNow;
+        sendTo(p1.ws, {
           type: 'REMOTE_PLAYER_STATE',
           role: 'PLAYER_2',
           state: {
             ...p2.latestState,
             serverTime: wallNow,
           },
-        },
-        p2.ws
-      );
+        });
+      }
     }
   }
 
   serverTickDurationMs = Math.round((performance.now() - tickStart) * 100) / 100;
-}, 33);
+}, SERVER_TICK_INTERVAL_MS);
 
 // Health check endpoints (both /health and /api/health)
 const handleHealthCheck = (_req: express.Request, res: express.Response) => {
   res.json({
     status: 'ok',
     activeRooms: rooms.size,
-    serverTickRate: 30,
+    serverTickRate: SERVER_TICK_RATE,
     serverTickDurationMs,
     uptime: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
